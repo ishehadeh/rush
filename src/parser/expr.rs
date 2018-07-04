@@ -25,17 +25,6 @@ pub enum InfixOperator {
     BitOr,
     And,
     Or,
-    Assign,
-    AssignMultiply,
-    AssignDivide,
-    AssignModulo,
-    AssignAdd,
-    AssignSubtract,
-    AssignLeftShift,
-    AssignRightShift,
-    AssignBitAnd,
-    AssignBitExclusiveOr,
-    AssignBitOr,
 }
 
 #[derive(Debug, Clone)]
@@ -62,32 +51,40 @@ pub enum Expr {
     Prefix(Box<Prefix>),
     Suffix(Box<Suffix>),
     Condition(Box<Condition>),
+    Assignment(Box<Assignment>),
 }
 
 #[derive(Debug, Clone)]
 pub struct Infix {
-    left: Expr,
-    operator: InfixOperator,
-    right: Expr,
+    pub left: Expr,
+    pub operator: InfixOperator,
+    pub right: Expr,
+}
+
+#[derive(Debug, Clone)]
+pub struct Assignment {
+    pub left: Expr,
+    pub operator: Option<InfixOperator>,
+    pub right: Expr,
 }
 
 #[derive(Debug, Clone)]
 pub struct Prefix {
-    operator: PrefixOperator,
-    right: Expr,
+    pub operator: PrefixOperator,
+    pub right: Expr,
 }
 
 #[derive(Debug, Clone)]
 pub struct Suffix {
-    operator: SuffixOperator,
-    left: Expr,
+    pub operator: SuffixOperator,
+    pub left: Expr,
 }
 
 #[derive(Debug, Clone)]
 pub struct Condition {
-    condition: Expr,
-    on_true: Expr,
-    on_false: Expr,
+    pub condition: Expr,
+    pub on_true: Expr,
+    pub on_false: Expr,
 }
 
 named!(
@@ -185,26 +182,14 @@ named!(
 named!(
     pub infix_operator<CompleteStr, InfixOperator>,
     alt!(
-          tag!("<<=") => { |_| InfixOperator::AssignLeftShift }
-        | tag!(">>=") => { |_| InfixOperator::AssignRightShift }
-        | tag!("<=") => { |_| InfixOperator::LessThanOrEqual }
-        | tag!(">=") => { |_| InfixOperator::GreaterThanOrEqual }
-        | tag!("<<") => { |_| InfixOperator::LeftShift }
+          tag!("<<") => { |_| InfixOperator::LeftShift }
         | tag!(">>") => { |_| InfixOperator::RightShift }
         | tag!("==") => { |_| InfixOperator::Equal }
         | tag!("!=") => { |_| InfixOperator::NotEqual }
         | tag!("&&") => { |_| InfixOperator::And }
         | tag!("||") => { |_| InfixOperator::Or }
-        | tag!("+=") => { |_| InfixOperator::AssignAdd }
-        | tag!("-=") => { |_| InfixOperator::AssignSubtract }
-        | tag!("*=") => { |_| InfixOperator::AssignMultiply }
-        | tag!("/=") => { |_| InfixOperator::AssignDivide }
-        | tag!("&=") => { |_| InfixOperator::AssignBitAnd }
-        | tag!("|=") => { |_| InfixOperator::AssignBitOr }
-        | tag!("^=") => { |_| InfixOperator::AssignBitExclusiveOr }
         | tag!("<") => { |_| InfixOperator::LessThan }
         | tag!(">") => { |_| InfixOperator::GreaterThan }
-        | tag!("=") => { |_| InfixOperator::Assign }
         | tag!("^") => { |_| InfixOperator::BitExclusiveOr }
         | tag!("|") => { |_| InfixOperator::BitOr }
         | tag!("&") => { |_| InfixOperator::BitAnd }
@@ -356,16 +341,36 @@ named!(infix_precedence11_12<CompleteStr, Expr>,
 );
 
 named!(infix_precedence14<CompleteStr, Expr>,
-    left_recursive!(infix_precedence11_12,
-          tag!("+=") => { |_| InfixOperator::AssignAdd }
-        | tag!("-=") => { |_| InfixOperator::AssignSubtract }
-        | tag!("*=") => { |_| InfixOperator::AssignMultiply }
-        | tag!("/=") => { |_| InfixOperator::AssignDivide }
-        | tag!("&=") => { |_| InfixOperator::AssignBitAnd }
-        | tag!("|=") => { |_| InfixOperator::AssignBitOr }
-        | tag!("^=") => { |_| InfixOperator::AssignBitExclusiveOr }
-        | tag!("=") => { |_| InfixOperator::Assign }
+    do_parse!(
+        initial: ws!(infix_precedence11_12) >>
+        sub: fold_many0!(
+            do_parse!(
+                op: ws!(alt!(
+                      tag!("+=") => { |_| Some(InfixOperator::Add) }
+                    | tag!("-=") => { |_| Some(InfixOperator::Subtract) }
+                    | tag!("*=") => { |_| Some(InfixOperator::Multiply) }
+                    | tag!("/=") => { |_| Some(InfixOperator::Divide) }
+                    | tag!("&=") => { |_| Some(InfixOperator::BitAnd) }
+                    | tag!("|=") => { |_| Some(InfixOperator::BitOr) }
+                    | tag!("^=") => { |_| Some(InfixOperator::BitExclusiveOr) }
+                    | tag!("=")  => { |_| None }
+                )) >>
+                expr: ws!(infix_precedence11_12) >>
+                (op, expr)
+            ),
+            initial,
+            |l, (op, r)| {
+                Expr::Assignment(Box::new(Assignment {
+                    left: l,
+                    operator: op,
+                    right: r,
+                }))
+            }) >> (sub)
     )
 );
 
 named!(pub expression<CompleteStr, Expr>, call!(infix_precedence14));
+
+pub fn parse<T: AsRef<str>>(s: T) -> Expr {
+    expression(CompleteStr(s.as_ref())).unwrap().1
+}
