@@ -104,7 +104,7 @@ named!(
 
 named!(
     pub unquoted_string<CompleteStr, CompleteStr>,
-    preceded!(not!(io_number),escaped!(is_not!(" \\'\"()|&;<>\t\n"), '\\', one_of!(" \\'\"()|&;<>\t\n~")))
+    preceded!(not!(io_number), escaped!(is_not!(" \\'\"()|&;<>\t\n"), '\\', one_of!(" \\'\"()|&;<>\t\n~")))
 );
 
 named!(
