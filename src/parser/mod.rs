@@ -1,4 +1,3 @@
-pub mod expr;
 /// Nom combinators for parsing RUSH shell scripts
 ///
 mod types;

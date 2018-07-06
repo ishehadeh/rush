@@ -6,3 +6,4 @@ authors = ["Ian Shehadeh <IanShehadeh2020@gmail.com>"]
 [dependencies]
 nom = "^4.0.0"
 nix = "*"
+error-chain = "0.12.0"
