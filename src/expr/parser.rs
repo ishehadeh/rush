@@ -2,7 +2,6 @@ use expr::errors::*;
 use expr::lexer::TokenStream;
 use expr::types::*;
 use std::fmt;
-use std::result;
 
 pub struct Parser<'a> {
     tokens: TokenStream<'a>,

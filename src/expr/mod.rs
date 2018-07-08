@@ -9,10 +9,10 @@ pub use self::errors::*;
 pub use self::parser::{parse, parse_ctx};
 pub use self::types::Expr;
 use self::types::Operator;
+use env::Variables;
 use nom::types::CompleteStr;
-use std::result;
+use std::ffi::OsString;
 use std::str::FromStr;
-use variables::Variables;
 
 pub fn eval<T: AsRef<str>>(s: T, vars: &mut Variables) -> Result<String> {
     Ok(parse(s.as_ref())?.evaluate(vars).to_string())
@@ -33,13 +33,13 @@ impl Expr {
     pub fn modify_variable<F: Fn(f64) -> f64>(self, vars: &mut Variables, f: F) -> Self {
         match self {
             Expr::Variable(n) => {
-                let new_value = f(lexer::number(CompleteStr(&vars.value(n.clone().to_string())
-                    .into_string()
-                    .unwrap()))
-                    .map(|(x, y)| y as f64)
+                let name: OsString = n.to_string().into();
+                let new_value = f(lexer::number(CompleteStr(
+                    vars.value(&name).to_str().unwrap_or("0"),
+                )).map(|(x, y)| y as f64)
                     .unwrap_or(0.0_f64));
 
-                vars.define(n.clone().to_string(), new_value.clone().to_string());
+                vars.define(&name, new_value.clone().to_string());
                 return Expr::Number(new_value);
             }
             _ => (),
@@ -49,10 +49,10 @@ impl Expr {
 
         match me {
             Expr::Variable(n) => {
-                let new_value = f(lexer::number(CompleteStr(&vars.value(n.clone().to_string())
-                    .into_string()
-                    .unwrap()))
-                    .map(|(x, y)| y as f64)
+                let name = n.to_string().into();
+                let new_value = f(lexer::number(CompleteStr(
+                    vars.value(&name).to_str().unwrap_or("0"),
+                )).map(|(x, y)| y as f64)
                     .unwrap_or(0.0_f64));
 
                 vars.define(n.clone().to_string(), new_value.clone().to_string());
@@ -70,13 +70,12 @@ impl Expr {
         for _ in 0..2 {
             match self {
                 Expr::Variable(n) => {
-                    let name = n.to_string();
-                    let new_value = f(lexer::number(CompleteStr(&vars.value(name.clone())
-                        .into_string()
-                        .unwrap()))
-                        .map(|(_, y)| y as f64)
+                    let name = n.to_string().into();
+                    let new_value = f(lexer::number(CompleteStr(
+                        vars.value(&name).to_str().unwrap_or("0"),
+                    )).map(|(_, y)| y as f64)
                         .unwrap_or(0.0_f64));
-                    vars.define(name.clone(), new_value.to_string());
+                    vars.define(name, new_value.to_string());
                     return Expr::Number(new_value);
                 }
                 _ => self = self.evaluate(vars),
@@ -105,7 +104,7 @@ impl Expr {
         match self {
             Expr::Number(n) => Expr::Number(n),
             Expr::Variable(n) => Expr::Number(
-                lexer::number(CompleteStr(&vars.value(n).into_string().unwrap()))
+                lexer::number(CompleteStr(&vars.value(&n.into()).into_string().unwrap()))
                     .map(|(_, y)| y as f64)
                     .unwrap_or(0.0_f64),
             ),
@@ -152,17 +151,23 @@ impl Expr {
                     Operator::Modulo => inf.left.modify_number(vars, |v| v % right),
                     Operator::LeftShift => inf.left.modify_number_i(vars, |v| v << right as isize),
                     Operator::RightShift => inf.left.modify_number_i(vars, |v| v >> right as isize),
-                    Operator::LessThan => inf.left
+                    Operator::LessThan => inf
+                        .left
                         .modify_number(vars, |v| (v < right) as isize as f64),
-                    Operator::LessThanOrEqual => inf.left
+                    Operator::LessThanOrEqual => inf
+                        .left
                         .modify_number(vars, |v| (v <= right) as isize as f64),
-                    Operator::GreaterThan => inf.left
+                    Operator::GreaterThan => inf
+                        .left
                         .modify_number(vars, |v| (v > right) as isize as f64),
-                    Operator::GreaterThanOrEqual => inf.left
+                    Operator::GreaterThanOrEqual => inf
+                        .left
                         .modify_number(vars, |v| (v >= right) as isize as f64),
-                    Operator::Equal => inf.left
+                    Operator::Equal => inf
+                        .left
                         .modify_number(vars, |v| (v == right) as isize as f64),
-                    Operator::NotEqual => inf.left
+                    Operator::NotEqual => inf
+                        .left
                         .modify_number(vars, |v| (v != right) as isize as f64),
                     Operator::BitAnd => inf.left.modify_number_i(vars, |v| v & right as isize),
                     Operator::BitExclusiveOr => {
@@ -185,15 +190,20 @@ impl Expr {
                     Operator::AssignMultiply => inf.left.assign_variable(vars, |v| v * right),
                     Operator::AssignDivide => inf.left.assign_variable(vars, |v| v / right),
                     Operator::AssignModulo => inf.left.assign_variable(vars, |v| v % right),
-                    Operator::AssignBitAnd => inf.left
+                    Operator::AssignBitAnd => inf
+                        .left
                         .assign_variable(vars, |v| (v as isize & right as isize) as f64),
-                    Operator::AssignBitExclusiveOr => inf.left
+                    Operator::AssignBitExclusiveOr => inf
+                        .left
                         .assign_variable(vars, |v| (v as isize ^ right as isize) as f64),
-                    Operator::AssignBitOr => inf.left
+                    Operator::AssignBitOr => inf
+                        .left
                         .assign_variable(vars, |v| (v as isize | right as isize) as f64),
-                    Operator::AssignLeftShift => inf.left
+                    Operator::AssignLeftShift => inf
+                        .left
                         .assign_variable(vars, |v| ((v as isize) << right as isize) as f64),
-                    Operator::AssignRightShift => inf.left
+                    Operator::AssignRightShift => inf
+                        .left
                         .assign_variable(vars, |v| (v as isize >> right as isize) as f64),
                     _ => unreachable!(),
                 }

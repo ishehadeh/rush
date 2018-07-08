@@ -1,10 +1,16 @@
+///! Variables is a wrapper around a `BTreeMap<OsString, OsString>`.
+///! It provides specialized methods for working with shell variables.
 use std::collections::btree_map;
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
 
-type Name = OsString;
-type Value = OsString;
+pub type Name = OsString;
+pub type Value = OsString;
+
+pub type Iter<'a> = btree_map::Iter<'a, Name, Value>;
+pub type IterMut<'a> = btree_map::IterMut<'a, Name, Value>;
+pub type IntoIter = btree_map::IntoIter<Name, Value>;
 
 #[derive(Debug, Clone)]
 pub struct Variables {
@@ -43,10 +49,6 @@ impl Variables {
         self.map.append(&mut env::vars_os().collect());
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&Name, &Value)> {
-        self.map.iter()
-    }
-
     pub fn define<T: Into<OsString>, U: Into<OsString>>(&mut self, k: T, v: U) {
         self.map.insert(k.into(), v.into());
     }
@@ -55,22 +57,19 @@ impl Variables {
         self.map.remove(k);
     }
 
-    pub fn value<T: Into<OsString>>(&self, k: T) -> OsString {
+    pub fn value(&self, k: &OsString) -> OsString {
         self.map
-            .get(&k.into())
+            .get(k)
             .map(|v| v.clone())
             .unwrap_or(OsString::new())
     }
 
-    pub fn exists<T: Into<OsString>>(&self, k: T) -> bool {
-        self.map.contains_key(&k.into())
+    pub fn exists<T: Into<OsString>>(&self, k: &OsString) -> bool {
+        self.map.contains_key(k)
     }
 
-    pub fn has_value<T: Into<OsString>>(&self, k: T) -> bool {
-        self.map
-            .get(&k.into())
-            .map(|v| v.len() > 0)
-            .unwrap_or(false)
+    pub fn has_value<T: Into<OsString>>(&self, k: &OsString) -> bool {
+        self.map.get(k).map(|v| v.len() > 0).unwrap_or(false)
     }
 
     pub fn entry<'a, T: Into<Name>>(&'a mut self, key: T) -> Entry<'a> {
@@ -79,18 +78,30 @@ impl Variables {
             btree_map::Entry::Vacant(v) => Entry::Vacant(VacantEntry { entry: v }),
         }
     }
+
+    pub fn export(&self, k: &OsString) {
+        env::set_var(k, self.value(k));
+    }
+
+    pub fn iter<'a>(&'a self) -> Iter<'a> {
+        self.map.iter()
+    }
+
+    pub fn iter_mut<'a>(&'a mut self) -> IterMut<'a> {
+        self.map.iter_mut()
+    }
 }
 
 impl<'a> OccupiedEntry<'a> {
-    pub fn name(&self) -> &Name {
+    pub fn key(&self) -> &Name {
         self.entry.key()
     }
 
-    pub fn value(&self) -> &Value {
+    pub fn get(&self) -> &Value {
         self.entry.get()
     }
 
-    pub fn value_mut(&mut self) -> &mut Value {
+    pub fn get_mut(&mut self) -> &mut Value {
         self.entry.get_mut()
     }
 
@@ -106,21 +117,13 @@ impl<'a> OccupiedEntry<'a> {
         self.entry.into_mut()
     }
 
-    pub fn is_null(&self) -> bool {
-        self.entry.get().len() == 0
-    }
-
     pub fn insert<T: Into<Value>>(mut self, value: T) -> Value {
         self.entry.insert(value.into())
-    }
-
-    pub fn export(self) {
-        env::set_var(self.name(), self.value());
     }
 }
 
 impl<'a> VacantEntry<'a> {
-    pub fn name(&self) -> &Name {
+    pub fn key(&self) -> &Name {
         self.entry.key()
     }
 
@@ -131,18 +134,13 @@ impl<'a> VacantEntry<'a> {
     pub fn insert<T: Into<Value>>(self, value: T) -> &'a mut Value {
         self.entry.insert(value.into())
     }
-
-    pub fn export(self) {
-        env::set_var(self.name().clone(), "");
-        self.insert("");
-    }
 }
 
 impl<'a> Entry<'a> {
     pub fn name(&self) -> &Name {
         match self {
-            Entry::Occupied(e) => e.name(),
-            Entry::Vacant(e) => e.name(),
+            Entry::Occupied(e) => e.key(),
+            Entry::Vacant(e) => e.key(),
         }
     }
 
@@ -152,7 +150,7 @@ impl<'a> Entry<'a> {
     {
         match self {
             Entry::Occupied(mut entry) => {
-                f(entry.value_mut());
+                f(entry.get_mut());
                 Entry::Occupied(entry)
             }
             Entry::Vacant(entry) => Entry::Vacant(entry),
@@ -184,37 +182,10 @@ impl<'a> Entry<'a> {
         }
     }
 
-    pub fn export(self) {
-        match self {
-            Entry::Occupied(e) => e.export(),
-            Entry::Vacant(e) => e.export(),
-        }
-    }
-
-    pub fn default<T: Into<Value>>(self, default: T) -> Value {
-        match self {
-            Entry::Occupied(e) => e.value().clone(),
-            Entry::Vacant(_) => default.into(),
-        }
-    }
-
-    pub fn default_null<T: Into<Value>>(self, default: T) -> Value {
-        match self {
-            Entry::Occupied(e) => {
-                if e.is_null() {
-                    default.into()
-                } else {
-                    e.value().clone()
-                }
-            }
-            Entry::Vacant(_) => default.into(),
-        }
-    }
-
     pub fn or_insert_null<T: Into<Value>>(self, default: T) -> &'a mut Value {
         match self {
             Entry::Occupied(e) => {
-                let isnull = e.is_null();
+                let isnull = e.get().len() == 0;
                 let mutref = e.into_mut();
                 if isnull {
                     *mutref = default.into();
@@ -234,5 +205,14 @@ impl<'a> Entry<'a> {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(default().into()),
         }
+    }
+}
+
+impl IntoIterator for Variables {
+    type IntoIter = IntoIter;
+    type Item = (Name, Value);
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.into_iter()
     }
 }

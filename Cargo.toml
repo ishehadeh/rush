@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Ian Shehadeh <IanShehadeh2020@gmail.com>"]
 
 [dependencies]
-nom = "^4.0.0"
-nix = "*"
+nom = "4.0.0"
+nix = "0.11.0"
 error-chain = "0.12.0"
+lazy_static = "1.0"

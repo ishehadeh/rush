@@ -1,14 +1,9 @@
-/// Nom combinators for parsing RUSH shell scripts
-///
-mod types;
-
-pub use self::types::*;
-
+///! Nom combinations for parsing RUSH shell scripts
 use nom::types::CompleteStr;
+use shell::ast::*;
+use shell::word::word;
 use std::os::unix::io::RawFd;
 use std::str::FromStr;
-
-use nom::Needed;
 
 /// eat any string of valid non-newline whitespace characters
 /// Characters Recognized as Whitespace:
@@ -102,43 +97,10 @@ named!(
 );
 
 named!(
-    pub unquoted_string<CompleteStr, CompleteStr>,
-    preceded!(not!(io_number), escaped!(is_not!(" \\'\"()|&;<>\t\n"), '\\', one_of!(" \\'\"()|&;<>\t\n~")))
-);
-
-named!(
-    pub single_quoted_string<CompleteStr, CompleteStr>,
-    delimited!(char!('\''), take_until!("\'"), char!('\''))
-);
-
-named!(
-    pub double_quoted_string<CompleteStr, CompleteStr>,
-    delimited!(char!('"'), escaped!(is_not!("\"n\\"), '\\', one_of!("\"n\\")), char!('"'))
-);
-
-/// A word is a basic string in a shell script
-///
-/// Words may be bare, single quoted, and double quoted, or any combination of the three.
-/// for example `hello"world "'goodbye'` is a valid word, "helloworld goodbye".
-named!(
-    pub word<CompleteStr, String>,
-    map!(
-        recognize!(
-            alt!(
-                  single_quoted_string
-                | double_quoted_string
-                | unquoted_string
-            )
-        ),
-        |v| v.to_string()
-    )
-);
-
-named!(
     pub simple_command<CompleteStr, Command>,
     do_parse!(
         args: separated_list!(space, word) >>
-        (Command::simple(&args))
+        (Command::simple(args))
     )
 );
 
@@ -157,10 +119,9 @@ named!(
     do_parse!(
         command  : sp!(simple_command) >>
         redirect : opt!(many1!(sp!(redirect_destination))) >>
-        (if redirect.is_none() {
-            command
-        } else {
-            Command::redirect(command, &redirect.unwrap())
+        (match redirect {
+            Some(v) => Command::redirect(command, v),
+            None => command,
         })
     )
 );
@@ -195,7 +156,7 @@ named!(
                 (op, expr)
             ),
             initial,
-            |start: Command, (op, expr)| {
+            |start, (op, expr)| {
                 Command::conditional(start, op, expr)
             }
         ) >> (extended)
@@ -207,10 +168,3 @@ named!(
     map!(sp!(separated_list!(separator, list)), |v| Command::group(v))
 
 );
-
-/// Parse a command from a string and panic if there is an error
-pub fn must_parse(input: &str) -> Command {
-    commandline(CompleteStr(input))
-        .unwrap_or_else(|e| panic!("{}", e))
-        .1
-}
