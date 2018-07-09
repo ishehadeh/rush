@@ -1,37 +1,11 @@
 use expr::errors::*;
 use expr::lexer::TokenStream;
 use expr::types::*;
-use std::fmt;
 
 pub struct Parser<'a> {
     tokens: TokenStream<'a>,
     peek: Option<Token<'a>>,
-    error_ctx: Context<'a>,
     column: usize,
-}
-
-pub struct Context<'a> {
-    full: &'a str,
-    unread: &'a str,
-    token: Token<'a>,
-    column: usize,
-}
-
-pub struct TokenHighlight<'a> {
-    ctx: Context<'a>,
-}
-
-pub struct UnreadHighlight<'a> {
-    ctx: Context<'a>,
-}
-
-macro_rules! fail_parse {
-    ($_self:ident, $err:ident, $fail_tok:expr) => {{
-        $_self.error_ctx.token = $fail_tok;
-        $_self.error_ctx.column = $_self.column();
-        $_self.error_ctx.unread = $_self.tokens.unread();
-        return Err(ErrorKind::$err($_self.error_ctx.column, $fail_tok.to_string()).into());
-    }};
 }
 
 macro_rules! expect_infix {
@@ -41,11 +15,10 @@ macro_rules! expect_infix {
             None => return Ok(Some($working_tree)),
         }) {
             Some(v) => v,
-            None => fail_parse!(
-                $_self,
-                UnexpectedInfixOperator,
-                $_self.peek().clone().unwrap()
-            ),
+            None => {
+                return Err(Error::from(ErrorKind::InvalidPrefixOperator)
+                    .with($_self.context($_self.peek().clone().unwrap())))
+            }
         }
     }};
 }
@@ -54,21 +27,10 @@ pub fn parse<T: AsRef<str>>(s: T) -> Result<Expr> {
     Parser::from(s.as_ref()).parse()
 }
 
-pub fn parse_ctx<'a>(s: &'a str) -> ContextResult<'a, Expr> {
-    let mut p = Parser::from(s);
-    p.parse().map_err(|e| (p.error_ctx, e))
-}
-
 impl<'a> Parser<'a> {
     pub fn new(t: TokenStream<'a>) -> Parser<'a> {
         Parser {
             peek: None,
-            error_ctx: Context {
-                full: t.full(),
-                unread: t.unread(),
-                token: Token::Comma,
-                column: 0,
-            },
             tokens: t,
             column: 1,
         }
@@ -98,9 +60,12 @@ impl<'a> Parser<'a> {
             Some(v) => Some(match v {
                 Ok(v) => v,
                 Err(e) => {
-                    self.error_ctx.column = self.tokens.column();
-                    self.error_ctx.unread = self.tokens.unread();
-                    return Err(e);
+                    return Err(e.with(Context {
+                        token: String::from(" "),
+                        input: self.tokens.full().to_string(),
+                        column: self.column(),
+                        line: 1,
+                    }));
                 }
             }),
             None => None,
@@ -108,14 +73,24 @@ impl<'a> Parser<'a> {
         Ok(tok)
     }
 
+    fn context(&self, tok: Token<'a>) -> Context {
+        Context {
+            token: tok.to_string(),
+            input: self.tokens.full().to_string(),
+            column: self.column(),
+            line: 1,
+        }
+    }
+
     fn must_parse_precedence(&mut self, p: Precedence) -> Result<Expr> {
         match try!(self.parse_precedence(p)) {
             Some(v) => Ok(v),
-            None => {
-                self.error_ctx.column = self.tokens.full().len();
-                self.error_ctx.unread = self.tokens.unread();
-                Err(ErrorKind::UnexpectedEof(self.error_ctx.column).into())
-            }
+            None => Err(Error::from(ErrorKind::UnexpectedEof).with(Context {
+                token: String::from(" "),
+                input: self.tokens.full().to_string(),
+                column: self.tokens.full().len(),
+                line: 1,
+            })),
         }
     }
 
@@ -127,10 +102,7 @@ impl<'a> Parser<'a> {
                 Token::Variable(n) => Expr::Variable(n.to_string()),
                 Token::Operator(op) => {
                     if !op.is_prefix() {
-                        return Err(ErrorKind::UnexpectedPrefixOperator(
-                            self.column(),
-                            op.to_string(),
-                        ).into());
+                        return Err(Error::from(ErrorKind::InvalidPrefixOperator).with(self.context(v)));
                     }
 
                     Expr::Prefix(Box::new(Prefix {
@@ -144,12 +116,15 @@ impl<'a> Parser<'a> {
                     match self.next()? {
                         Some(v) => match v {
                             Token::RightParen => new_left,
-                            _ => fail_parse!(self, ExpectingRightParentheses, v.clone()),
+                            _ => {
+                                return Err(Error::from(ErrorKind::ExpectingRightParentheses)
+                                    .with(self.context(v)))
+                            }
                         },
-                        None => fail_parse!(self, ExpectingRightParentheses, v.clone()),
+                        None => return Err(Error::from(ErrorKind::ExpectingRightParentheses).with(self.context(v))),
                     }
                 }
-                _ => fail_parse!(self, InvalidToken, v.clone()),
+                _ => return Err(Error::from(ErrorKind::InvalidToken).with(self.context(v))),
             },
             None => return Ok(None),
         };
@@ -183,7 +158,10 @@ impl<'a> Parser<'a> {
                         match self.next()? {
                             Some(v) => match v {
                                 Token::Colon => (),
-                                _ => fail_parse!(self, ExpectingTernaryElse, v.clone()),
+                                _ => {
+                                    return Err(Error::from(ErrorKind::ExpectingTernaryElse)
+                                        .with(self.context(v)))
+                                }
                             },
                             None => return Ok(None),
                         };
@@ -204,7 +182,10 @@ impl<'a> Parser<'a> {
                             operator: match next {
                                 Some(v) => match v {
                                     Token::Operator(o) => o,
-                                    _ => fail_parse!(self, UnexpectedInfixOperator, v.clone()),
+                                    _ => {
+                                        return Err(Error::from(ErrorKind::InvalidInfixOperator)
+                                            .with(self.context(v)))
+                                    }
                                 },
                                 None => return Ok(None),
                             },
@@ -214,9 +195,15 @@ impl<'a> Parser<'a> {
                         match self.next()? {
                             Some(v) => match v {
                                 Token::RightParen => new_left,
-                                _ => fail_parse!(self, ExpectingRightParentheses, v.clone()),
+                                _ => {
+                                    return Err(Error::from(ErrorKind::ExpectingRightParentheses)
+                                        .with(self.context(v)))
+                                }
                             },
-                            None => fail_parse!(self, ExpectingRightParentheses, v.clone()),
+                            None => {
+                                return Err(Error::from(ErrorKind::ExpectingRightParentheses)
+                                    .with(self.context(v)))
+                            }
                         }
                     }
                     _ => unreachable!(),
@@ -228,69 +215,5 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Some(left))
-    }
-}
-
-impl<'a> Context<'a> {
-    pub fn token_highlighter(self) -> TokenHighlight<'a> {
-        TokenHighlight { ctx: self }
-    }
-
-    pub fn unread_highlighter(self) -> UnreadHighlight<'a> {
-        UnreadHighlight { ctx: self }
-    }
-
-    pub fn full_string(&self) -> String {
-        self.full.to_string()
-    }
-
-    pub fn unread_string(&self) -> String {
-        self.unread.to_string()
-    }
-
-    pub fn line(&self) -> usize {
-        1
-    }
-
-    pub fn column(&self) -> usize {
-        self.column
-    }
-
-    pub fn token(&self) -> Token<'a> {
-        self.token.clone()
-    }
-}
-
-impl<'a> fmt::Display for TokenHighlight<'a> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        let token = self.ctx.token().to_string();
-        let lineno = self.ctx.line().to_string();
-        let prefix = format!("{} |", " ".repeat(lineno.len()));
-        write!(fmt, "{}\n", prefix)?;
-        write!(fmt, "{} |  {}\n", lineno, self.ctx.full)?;
-        write!(
-            fmt,
-            "{}  {}{}\n",
-            prefix,
-            " ".repeat(self.ctx.column()),
-            "^".repeat(token.len())
-        )
-    }
-}
-
-impl<'a> fmt::Display for UnreadHighlight<'a> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        let lineno = self.ctx.line().to_string();
-        let prefix = format!("{} |", " ".repeat(lineno.len()));
-
-        write!(fmt, "{}\n", prefix)?;
-        write!(fmt, "{} |  {}\n", lineno, self.ctx.full)?;
-        write!(
-            fmt,
-            "{}{}{}\n",
-            prefix,
-            " ".repeat(self.ctx.column() - 1),
-            "^".repeat(self.ctx.unread.len())
-        )
     }
 }

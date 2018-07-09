@@ -48,8 +48,7 @@ named!(
     )
 );
 
-named!(
-    pub decimal_integer<CompleteStr, isize>,
+named!(pub decimal_integer<CompleteStr, isize>,
     flat_map!(digit, parse_to!(isize))
 );
 
@@ -87,13 +86,34 @@ named!(
 );
 
 named!(
-    pub number<CompleteStr, isize>,
+    pub integer<CompleteStr, isize>,
     ws!(alt!(
           hexadecimal
         | octal
         | binary
         | decimal_integer
     ))
+);
+
+named!(
+    pub float<CompleteStr, f64>,
+    do_parse!(
+        prefix: opt!(ws!(alt!(char!('+') | char!('-')))) >>
+        number: alt!(
+            decimal
+            | map!(integer, |x| x as f64)
+        ) >>
+        (
+            match prefix {
+                Some(v) => match v {
+                    '+' => number,
+                    '-' => -number,
+                    _=> unreachable!(),
+                }
+                None => number
+            }
+        )
+    )
 );
 
 named!(
@@ -166,8 +186,8 @@ impl<'a> Iterator for TokenStream<'a> {
         let tok = opt!(
             CompleteStr(self.sliced),
             ws!(alt!( 
-                  decimal    => { |v| Token::FloatingNumber(v) }
-                | number     => { |v| Token::Number(v)         }
+                decimal    => { |v| Token::FloatingNumber(v) }
+                | integer    => { |v| Token::Number(v)         }
                 | variable   => { |v| Token::Variable(v)       }
                 | operator   => { |v| Token::Operator(v)       }
                 | char!(',') => { |_| Token::Comma             }
@@ -189,10 +209,9 @@ impl<'a> Iterator for TokenStream<'a> {
             None => if self.sliced.len() == 0 {
                 None
             } else {
-                return Some(Err(ErrorKind::InvalidCharacter(
-                    self.column(),
-                    self.sliced.to_string(),
-                ).into()));
+                Some(Err(ErrorKind::InvalidCharacter(
+                    self.sliced.chars().next().unwrap(),
+                ).into()))
             },
         }
     }

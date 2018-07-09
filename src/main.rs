@@ -1,9 +1,9 @@
 #[macro_use]
 extern crate nom;
 #[macro_use]
-extern crate error_chain;
-#[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate failure;
 extern crate nix;
 
 pub mod env;
@@ -18,6 +18,6 @@ fn main() {
     println!(
         "\"{}\" exited with exit code {}",
         arg1,
-        exe.execute_str(&arg1)
+        exe.execute_str(&arg1).unwrap_or_else(|e| panic!("{}", e))
     );
 }

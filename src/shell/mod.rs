@@ -5,10 +5,12 @@ pub mod word;
 
 pub use self::errors::*;
 use env;
+use failure::ResultExt;
+
 use nix;
 use nom;
 use std::env::split_paths;
-use std::ffi::{CString, OsString};
+use std::ffi::{CString, OsStr, OsString};
 use std::path;
 use std::vec::Vec;
 
@@ -25,45 +27,49 @@ impl<'a> ExecutionEnvironment<'a> {
         }
     }
 
-    pub fn find_executable(&self, prog: &String) -> Option<path::PathBuf> {
+    pub fn find_executable<S: AsRef<OsStr>>(&self, prog: S) -> Result<path::PathBuf> {
+        let prog_ref = prog.as_ref();
         for path in split_paths(&self.vars.value(&OsString::from("PATH"))) {
-            let p = path.with_file_name(prog);
+            let p = path.with_file_name(prog_ref);
             if p.exists() {
-                return Some(p);
+                return Ok(p);
             }
         }
-        None
+
+        let owned_prog = prog_ref.to_os_string().to_string_lossy().to_string();
+        Err(Error::from(ErrorKind::MissingExecutable(owned_prog)))
     }
 
-    pub fn execute(&mut self, cmd: ast::SimpleCommand<'a>) -> i32 {
+    pub fn execute(&mut self, cmd: ast::SimpleCommand<'a>) -> Result<i32> {
         match nix::unistd::fork().unwrap() {
             nix::unistd::ForkResult::Child => {
-                let args = cmd
-                    .arguments
+                let compiled_args = cmd.arguments
                     .iter()
-                    .map(|arg| CString::new(arg.compile(&mut self.vars)).unwrap())
-                    .collect::<Vec<CString>>();
-                let arg0 = &cmd
-                    .arguments
-                    .iter()
-                    .nth(0)
-                    .clone()
-                    .unwrap()
-                    .compile(&mut self.vars);
-                let exe = self.find_executable(arg0).unwrap();
-                nix::unistd::execv(&CString::new(exe.to_str().unwrap()).unwrap(), &args).unwrap();
+                    .map(|arg| arg.compile(&mut self.vars))
+                    .collect::<Vec<String>>();
+
+                let exe = self.find_executable(compiled_args.first().unwrap())?;
+                let mut cargs = Vec::with_capacity(compiled_args.len());
+                for x in compiled_args {
+                    cargs.push(CString::new(x).context(ErrorKind::IllegalNullByte)?)
+                }
+                nix::unistd::execv(
+                    &CString::new(exe.to_string_lossy().to_string())
+                        .context(ErrorKind::IllegalNullByte)?,
+                    &cargs,
+                ).context(ErrorKind::ExecFailed)?;
                 unreachable!()
             }
             nix::unistd::ForkResult::Parent { child } => {
-                match nix::sys::wait::waitpid(child, None).unwrap() {
-                    nix::sys::wait::WaitStatus::Exited(_, status) => status,
+                match nix::sys::wait::waitpid(child, None).context(ErrorKind::WaitFailed)? {
+                    nix::sys::wait::WaitStatus::Exited(_, status) => Ok(status),
                     _ => unimplemented!(),
                 }
             }
         }
     }
 
-    pub fn execute_str(&mut self, s: &'a str) -> i32 {
+    pub fn execute_str(&mut self, s: &'a str) -> Result<i32> {
         let cmd = parser::simple_command(nom::types::CompleteStr(s))
             .unwrap()
             .1;

@@ -50,7 +50,7 @@ pub enum Token<'a> {
     RightParen,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operator {
     Add,
     Subtract,
@@ -87,7 +87,7 @@ pub enum Operator {
     Not,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Precedence {
     Minimum,
     Prefix,

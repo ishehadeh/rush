@@ -1,6 +1,5 @@
 use shell::word::Word;
 use std::os::unix::io::RawFd;
-use std::process;
 use std::vec::Vec;
 
 #[derive(Debug, Clone)]

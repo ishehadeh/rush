@@ -1,45 +1,114 @@
-use expr::parser::Context;
-use expr::types::*;
-use std::fmt;
-use std::result;
+use failure;
+use std::{fmt, result};
 
-pub type ContextResult<'a, T> = result::Result<T, (Context<'a>, Error)>;
+pub type Result<T> = result::Result<T, Error>;
 
-error_chain!{
-    errors {
-        InvalidCharacter(column : usize, unread : String) {
-            description("unable to parse string, invalid character"),
-            display("1:{} unable to parse string, invalid character \"{}\"", column, unread.chars().nth(0).unwrap_or(' ')),
+#[derive(Debug)]
+pub struct Error {
+    parser_context: Option<Context>,
+    inner: failure::Context<ErrorKind>,
+}
+
+#[derive(Debug)]
+pub struct Context {
+    pub input: String,
+    pub token: String,
+    pub column: usize,
+    pub line: usize,
+}
+
+#[derive(Eq, PartialEq, Debug, Fail)]
+pub enum ErrorKind {
+    #[fail(display = "unable to parse string, illegal character '{}'", _0)]
+    InvalidCharacter(char),
+
+    #[fail(display = "invalid token")]
+    InvalidToken,
+
+    #[fail(
+        display = "unexpected prefix operator, Expecting one of ~, !, +, -, ++, --, a number, or a variable."
+    )]
+    InvalidPrefixOperator,
+
+    #[fail(display = "unexpected infix operator, expecting an operator like +, -, *, %, etc.")]
+    InvalidInfixOperator,
+
+    #[fail(display = "expecting a ternary condition 'else' block beginning with ':'")]
+    ExpectingTernaryElse,
+
+    #[fail(display = "expecting right parentheses")]
+    ExpectingRightParentheses,
+
+    #[fail(
+        display = "invalid number, please only use numbers, unary +/-, decimal points, and exponents."
+    )]
+    InvalidNumber,
+
+    #[fail(display = "unexpected end-of-expression")]
+    UnexpectedEof,
+}
+
+impl Error {
+    pub fn kind(&self) -> &ErrorKind {
+        self.inner.get_context()
+    }
+
+    pub fn with(mut self, ctx: Context) -> Self {
+        self.parser_context = Some(ctx);
+        self
+    }
+}
+
+impl failure::Fail for Error {
+    fn cause(&self) -> Option<&failure::Fail> {
+        self.inner.cause()
+    }
+
+    fn backtrace(&self) -> Option<&failure::Backtrace> {
+        self.inner.backtrace()
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}\n", self.inner)?;
+        match &self.parser_context {
+            Some(v) => write!(f, "{}", v),
+            None => Ok(()),
         }
+    }
+}
 
-        InvalidToken(column : usize, tok : String) {
-            description("invalid token"),
-            display("1:{} invalid token \"{}\"", column, tok),
+impl From<failure::Context<ErrorKind>> for Error {
+    fn from(inner: failure::Context<ErrorKind>) -> Error {
+        Error {
+            parser_context: None,
+            inner: inner,
         }
+    }
+}
 
-        UnexpectedPrefixOperator(column : usize, tok : String) {
-            description("unexpected prefix operator"),
-            display("1:{} Unexpected operator \"{}\". Expecting one of ~, !, +, -, ++, --, a number, or a variable.", column, tok),
+impl From<ErrorKind> for Error {
+    fn from(inner: ErrorKind) -> Error {
+        Error {
+            parser_context: None,
+            inner: failure::Context::new(inner),
         }
+    }
+}
 
-        UnexpectedInfixOperator(column : usize, tok : String) {
-            description("unexpected infix operator"),
-            display("1:{} Unexpected infix operator \"{}\". Expecting an operator like +, -, *, %, etc.", column, tok),
-        }
+impl fmt::Display for Context {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let prefix = format!("{} |", " ".repeat(self.line.to_string().len()));
 
-        ExpectingTernaryElse(column : usize, tok : String) {
-            description("expecting a ternary condition 'else' block starting with ':'")
-            display("1:{} expecting the conditional 'else' block (starting with ':'), found \"{}\"", column, tok)
-        }
-
-        ExpectingRightParentheses(column : usize, tok : String) {
-            description("expecting right parentheses (')')")
-            display("1:{} expecting right parentheses (')'), found \"{}\"", column, tok)
-        }
-
-        UnexpectedEof(column: usize) {
-            description("unexpected end of expression"),
-            display("1:{} unexpected end of expression", column),
-        }
+        write!(f, "{}\n", prefix)?;
+        write!(f, "{} |  {}\n", self.line, self.input)?;
+        write!(
+            f,
+            "{}  {}{}\n",
+            prefix,
+            " ".repeat(self.column),
+            "^".repeat(self.token.len())
+        )
     }
 }
