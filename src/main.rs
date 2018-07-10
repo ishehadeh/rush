@@ -15,6 +15,8 @@ use std::env::args;
 fn main() {
     let arg1 = args().next_back().unwrap();
     let mut exe = shell::ExecutionEnvironment::new();
+    let false_job = exe.spawn(shell::parse("false")).unwrap();
+    exe.spawn(shell::parse("echo hi"));
 
     println!(
         "\"{}\" exited with exit code {}",

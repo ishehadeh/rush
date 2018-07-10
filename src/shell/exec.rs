@@ -24,7 +24,7 @@ pub type JobId = usize;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JobStatus {
     Running,
-    Finished,
+    Finished(i32),
     Stopped,
     Sleeping,
 }
@@ -42,12 +42,13 @@ pub struct RawCommand {
     arguments: Vec<CString>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Job<'a> {
     id: JobId,
     status: JobStatus,
-    queue: VecDeque<ast::SimpleCommand<'a>>,
 
+    queue: VecDeque<ast::SimpleCommand<'a>>,
+    dependencies: Vec<JobId>,
     fd_actions: Vec<FdAction>,
     variables: Vec<CString>,
 }
@@ -141,12 +142,25 @@ impl<'a> ExecutionEnvironment<'a> {
         })
     }
 
-    pub fn job<'b>(&'b self, jid: JobId) -> Option<&'b Job<'a>> {
-        self.queued_jobs.iter().nth(jid)
+    pub fn job<'b>(&'b self, jid: JobId) -> Result<&'b Job<'a>> {
+        match self.queued_jobs.iter().nth(jid) {
+            Some(v) => Ok(v),
+            None => Err(ErrorKind::InvalidJobId(jid).into()),
+        }
     }
 
-    pub fn job_mut<'b>(&'b mut self, jid: JobId) -> Option<&'b mut Job<'a>> {
-        self.queued_jobs.iter_mut().nth(jid)
+    pub fn job_mut<'b>(&'b mut self, jid: JobId) -> Result<&'b mut Job<'a>> {
+        match self.queued_jobs.iter_mut().nth(jid) {
+            Some(v) => Ok(v),
+            None => Err(ErrorKind::InvalidJobId(jid).into()),
+        }
+    }
+
+    pub fn fork(&mut self, jid: JobId) -> Result<JobId> {
+        let new_jid = self.queued_jobs.len();
+        let new_job = self.job(jid)?.clone();
+        self.queued_jobs.push(new_job);
+        Ok(new_jid)
     }
 
     pub fn schedule(&mut self) -> Result<JobId> {
@@ -158,6 +172,7 @@ impl<'a> ExecutionEnvironment<'a> {
             queue: VecDeque::new(),
             fd_actions: Vec::new(),
             variables: Vec::new(),
+            dependencies: Vec::new(),
         });
 
         Ok(jid)
@@ -165,14 +180,14 @@ impl<'a> ExecutionEnvironment<'a> {
 
     pub fn launch_job(&mut self, jid: JobId) -> Result<()> {
         let command = match self.job_mut(jid) {
-            Some(v) => v.queue.pop_back().unwrap(), // TODO: check to make sure the queue isn't empty
-            None => return Err(ErrorKind::InvalidJobId(jid).into()),
+            Ok(v) => v.queue.pop_back().unwrap(), // TODO: check to make sure the queue isn't empty
+            Err(e) => return Err(e),
         };
 
         let raw_command = self.make_raw_command(&command)?;
 
         let process = {
-            let job = self.job_mut(jid).unwrap();
+            let job = self.job_mut(jid)?;
             if job.status != JobStatus::Sleeping {
                 return Err(ErrorKind::FailedToRunJob(jid, job.status).into());
             }
@@ -201,7 +216,7 @@ impl<'a> ExecutionEnvironment<'a> {
     }
 
     pub fn wait_for(&mut self, jid: JobId) -> Result<i32> {
-        // it doesn't matter what it the handler is doing, but there has to be one for SIGCHLD
+        // it doesn't matter what the handler is doing, but there has to be one for SIGCHLD
         if !env::traps::is_trapped(signal::Signal::SIGCHLD) {
             env::traps::trap(signal::Signal::SIGCHLD, env::traps::Action::NoOp)
                 .context(ErrorKind::WaitFailed)?;
@@ -219,7 +234,10 @@ impl<'a> ExecutionEnvironment<'a> {
                     wait::WaitStatus::Exited(pid, exit_code) => match self.cleanup(pid)? {
                         Some(finished_jid) => {
                             if finished_jid == jid {
-                                ret = Some(exit_code)
+                                ret = Some(exit_code);
+                            } else {
+                                self.job_mut(finished_jid).unwrap().status =
+                                    JobStatus::Finished(exit_code);
                             }
                         }
                         None => (), // Not one of our processes
@@ -234,7 +252,7 @@ impl<'a> ExecutionEnvironment<'a> {
         }
     }
 
-    pub fn spawn_on(&mut self, cmd: ast::Command<'a>, job: JobId) -> Result<()> {
+    fn add_command_to_job(&mut self, cmd: ast::Command<'a>, job: JobId) -> Result<()> {
         match cmd {
             shell::ast::Command::SimpleCommand(sc) => {
                 self.job_mut(job).unwrap().queue.push_back(sc);
@@ -242,7 +260,7 @@ impl<'a> ExecutionEnvironment<'a> {
 
             shell::ast::Command::Group(g) => {
                 for c in g.commands {
-                    self.spawn_on(c, job)?;
+                    self.add_command_to_job(c, job)?;
                 }
             }
             _ => unimplemented!(),
@@ -250,15 +268,20 @@ impl<'a> ExecutionEnvironment<'a> {
         Ok(())
     }
 
-    pub fn spawn(&mut self, cmd: ast::Command<'a>) -> Result<JobId> {
+    pub fn make_job(&mut self, cmd: ast::Command<'a>) -> Result<JobId> {
         let job = self.schedule()?;
-        self.spawn_on(cmd, job)?;
+        self.add_command_to_job(cmd, job)?;
+        Ok(job)
+    }
+
+    pub fn spawn(&mut self, cmd: ast::Command<'a>) -> Result<JobId> {
+        let job = self.make_job(cmd)?;
+        self.launch_job(job)?;
         Ok(job)
     }
 
     pub fn run(&mut self, cmd: ast::Command<'a>) -> Result<i32> {
         let jid = self.spawn(cmd)?;
-        self.launch_job(jid)?;
         self.wait_for(jid)
     }
 
