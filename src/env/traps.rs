@@ -1,79 +1,95 @@
 use nix;
 use nix::sys::signal;
 pub use nix::sys::signal::Signal;
+use std::collections::HashMap;
 use std::os::raw::c_int;
 use std::slice;
 use std::sync::Mutex;
 
 lazy_static! {
-    static ref SIGNAL_ACTION_TRAP: signal::SigAction = {
-        signal::SigAction::new(
-            signal::SigHandler::Handler(__rush_global_signal_handler),
-            signal::SaFlags::empty(),
-            signal::SigSet::empty(),
-        )
-    };
+    static ref GLOBAL_TRAPS: Mutex<Traps> = { Mutex::new(Traps::with_capacity(31)) };
 }
 
-lazy_static! {
-    static ref SIGNAL_ACTION_DEFAULT: signal::SigAction = {
-        signal::SigAction::new(
-            signal::SigHandler::SigDfl,
-            signal::SaFlags::empty(),
-            signal::SigSet::empty(),
-        )
-    };
-}
-
-lazy_static! {
-    static ref GLOBAL_TRAPS: Mutex<Traps> = { Mutex::new(Traps::new()) };
-}
-
-pub struct Traps([Action; 31]);
+pub type LineFn = Box<FnMut() + Send + Sync + 'static>;
+pub type Traps = HashMap<Signal, Vec<Action>>;
 pub type TrapIter<'a> = slice::Iter<'a, Action>;
 
-#[derive(Debug, Clone, PartialEq)]
 pub enum Action {
-    Default,
+    NoOp,
     Eval(String),
+    Func(LineFn),
 }
 
-pub fn trap(sig: Signal, s: String) -> nix::Result<()> {
+pub fn trap(sig: Signal, a: Action) -> nix::Result<()> {
     let mut mut_traps = GLOBAL_TRAPS.lock().unwrap();
-    mut_traps.set(sig, Action::Eval(s));
-    unsafe { signal::sigaction(sig, &*SIGNAL_ACTION_TRAP) }.map(|_| ())
+    match mut_traps.get_mut(&sig) {
+        Some(v) => {
+            v.push(a);
+            return Ok(());
+        }
+        None => unsafe {
+            signal::sigaction(
+                sig,
+                &signal::SigAction::new(
+                    signal::SigHandler::Handler(__rush_global_signal_handler),
+                    signal::SaFlags::empty(),
+                    signal::SigSet::empty(),
+                ),
+            )
+        }.map(|_| ())?,
+    };
+    mut_traps.insert(sig, vec![a]);
+    Ok(())
 }
 
-pub fn trap_s<T: AsRef<str>>(sig: T, s: String) -> nix::Result<()> {
+pub fn trap_s<T: AsRef<str>>(sig: T, a: Action) -> nix::Result<()> {
     trap(
         match parse_signal(sig) {
             Some(v) => v,
             None => return Err(nix::Error::UnsupportedOperation),
         },
-        s,
+        a,
     )
 }
 
 pub fn release(sig: Signal) -> nix::Result<()> {
     let mut mut_traps = GLOBAL_TRAPS.lock().unwrap();
-    mut_traps.set(sig, Action::Default);
-    unsafe { signal::sigaction(sig, &*SIGNAL_ACTION_DEFAULT) }.map(|_| ())
+    mut_traps.remove(&sig);
+    unsafe {
+        signal::sigaction(
+            sig,
+            &signal::SigAction::new(
+                signal::SigHandler::SigDfl,
+                signal::SaFlags::empty(),
+                signal::SigSet::empty(),
+            ),
+        )
+    }.map(|_| ())
+}
+
+pub fn is_trapped(sig: Signal) -> bool {
+    return GLOBAL_TRAPS.lock().unwrap().contains_key(&sig);
 }
 
 extern "C" fn __rush_global_signal_handler(sig: c_int) {
-    let traps = GLOBAL_TRAPS.lock().unwrap();
-    match traps.get_by_id(sig) {
-        Action::Default => (),
-        Action::Eval(ref s) => {
-            println!("\n==> Signal handler for \"{}\"", s);
-            unimplemented!();
-        }
+    let mut traps = GLOBAL_TRAPS.lock().unwrap();
+    match traps.get_mut(&(Signal::from_c_int(sig).unwrap())) {
+        Some(actions) => for action in actions {
+            match action {
+                Action::Eval(ref s) => {
+                    println!("\n==> Signal handler for \"{}\"", s);
+                    unimplemented!();
+                }
+                Action::Func(ref mut f) => f(),
+                Action::NoOp => (),
+            }
+        },
+        None => (),
     }
 }
 
 pub fn parse_signal<T: AsRef<str>>(s: T) -> Option<Signal> {
-    Some(match s
-        .as_ref()
+    Some(match s.as_ref()
         .to_ascii_uppercase()
         .trim()
         .trim_left_matches("SIG")
@@ -111,80 +127,4 @@ pub fn parse_signal<T: AsRef<str>>(s: T) -> Option<Signal> {
         "31" | "SYS" => Signal::SIGSYS,
         _ => return None,
     })
-}
-
-impl Traps {
-    pub fn new() -> Traps {
-        Traps::default()
-    }
-
-    pub fn set(&mut self, sig: Signal, act: Action) {
-        self.0[sig as usize] = act;
-    }
-
-    pub fn set_from_string<T: AsRef<str>>(&mut self, sig: T, act: Action) -> Option<Signal> {
-        match parse_signal(sig) {
-            Some(v) => {
-                self.set(v, act);
-                Some(v)
-            }
-            None => None,
-        }
-    }
-
-    pub fn get<'a>(&'a self, sig: Signal) -> &'a Action {
-        &self.0[sig as usize]
-    }
-
-    pub fn get_by_id<'a>(&'a self, sig: c_int) -> &'a Action {
-        &self.0[sig as usize]
-    }
-
-    pub fn iter<'a>(&'a self) -> TrapIter<'a> {
-        self.0.iter()
-    }
-}
-
-impl Default for Action {
-    fn default() -> Action {
-        Action::Default
-    }
-}
-
-impl Default for Traps {
-    fn default() -> Traps {
-        Traps([
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-            Action::Default,
-        ])
-    }
 }

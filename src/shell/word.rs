@@ -1,7 +1,9 @@
 use env;
 use expr;
+use failure::ResultExt;
 use nom;
 use nom::types::CompleteStr;
+use shell::{ErrorKind, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
@@ -100,6 +102,7 @@ pub fn unquoted_token<'a>(i: CompleteStr<'a>) -> nom::IResult<CompleteStr<'a>, T
             alt!(
                 char!('"')
                 | char!('\\')
+                | char!('|')
                 | char!('n')
                 | char!('\n')
                 | char!('\'')
@@ -120,7 +123,7 @@ pub fn unquoted_token<'a>(i: CompleteStr<'a>) -> nom::IResult<CompleteStr<'a>, T
                 many0!(single_quoted_token),
             char!('\'')
         ) => { |c| Token::Quoted(Word::from(c)) }
-        | take_while1!(|c : char| c != '"' && c != '\'' && c != '\\' && c != '$' && !nom::is_space(c as u8)) => {|x : CompleteStr<'a>| Token::Slice(x.0)}
+        | take_while1!(|c : char| c != '"' && c != '\'' &&  c != '|' && c != '\\' && c != '$' && !nom::is_space(c as u8)) => {|x : CompleteStr<'a>| Token::Slice(x.0)}
     )
 }
 
@@ -148,7 +151,7 @@ impl<'a> Word<'a> {
         word(CompleteStr(s)).unwrap().1
     }
 
-    pub fn compile(&self, vars: &mut env::Variables) -> String {
+    pub fn compile(&self, vars: &mut env::Variables) -> Result<String> {
         use std::ffi::OsString;
 
         let mut s = String::new(); // TODO set capacity to avoid reallocations
@@ -158,15 +161,30 @@ impl<'a> Word<'a> {
                     s.push_str(vars.value(&OsString::from("HOME")).to_str().unwrap_or(""))
                 }
                 Token::Slice(v) => s.push_str(v),
-                Token::Expr(v) => s.push_str(&expr::eval(&v.compile(vars), vars).unwrap()), // TODO error handling
+                Token::Expr(v) => {
+                    let evaluated: String = expr::eval(v.compile(vars)?.as_str(), vars)
+                        .context(ErrorKind::ExpressionError)?;
+                    s.push_str(&evaluated)
+                } // TODO error handling
                 Token::Variable(v) => {
                     s.push_str(vars.value(&OsString::from(v)).to_str().unwrap_or(""))
                 }
-                Token::Escape(v) => s.push(*v),
-                Token::Quoted(v) => s.extend(v.compile(vars).chars()),
+                Token::Escape(v) => s.push(match *v {
+                    'n' => '\n',
+                    't' => '\t',
+                    '"' => '"',
+                    '\'' => '\'',
+                    ' ' => ' ',
+                    '$' => '$',
+                    '|' => '|',
+                    '\n' => '\n',
+                    '`' => '`',
+                    _ => '�',
+                }),
+                Token::Quoted(v) => s.extend(v.compile(vars)?.chars()),
                 _ => unimplemented!(),
             };
         }
-        s
+        Ok(s)
     }
 }

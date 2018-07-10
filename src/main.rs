@@ -15,9 +15,10 @@ use std::env::args;
 fn main() {
     let arg1 = args().next_back().unwrap();
     let mut exe = shell::ExecutionEnvironment::new();
+
     println!(
         "\"{}\" exited with exit code {}",
         arg1,
-        exe.execute_str(&arg1).unwrap_or_else(|e| panic!("{}", e))
+        exe.run_str(&arg1).unwrap_or_else(|e| panic!("{}", e))
     );
 }

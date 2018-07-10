@@ -1,4 +1,5 @@
 use failure;
+use shell::exec;
 use std::{fmt, result};
 
 pub type Result<T> = result::Result<T, Error>;
@@ -9,8 +10,8 @@ pub struct Error {
 
 #[derive(Eq, PartialEq, Debug, Fail)]
 pub enum ErrorKind {
-    #[fail(display = "failed to parse expression")]
-    ExpressionParsingError,
+    #[fail(display = "failed to evaluate expression")]
+    ExpressionError,
 
     #[fail(display = "system error")]
     SysError,
@@ -31,6 +32,21 @@ pub enum ErrorKind {
 
     #[fail(display = "failed to execute child process")]
     ExecFailed,
+
+    #[fail(display = "failed to create a pipeline")]
+    PipelineCreationFailed,
+
+    #[fail(display = "failed to fork the process")]
+    ForkFailed,
+
+    #[fail(display = "invalid job (#{})", _0)]
+    InvalidJobId(exec::JobId),
+
+    #[fail(display = "cannot run job #{} ({:?})", _0, _1)]
+    FailedToRunJob(exec::JobId, exec::JobStatus),
+
+    #[fail(display = "failed to modify the file descriptor table (action: {:?})", _0)]
+    FdTableMutationFailed(exec::FdAction),
 }
 
 impl Error {
