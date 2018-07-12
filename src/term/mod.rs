@@ -44,7 +44,51 @@ where
         if !match ch {
             0...12 => onkey(Key::Control((ch + 64) as char)),
             13 => onkey(Key::Newline),
-            27 => onkey(Key::Escape),
+            27 => {
+                let mut iter = io::stdin().bytes();
+                match iter.next() {
+                    Some(v) => {
+                        let opkind = v.context(ErrorKind::GetCharFailed)? as char;
+                        match opkind {
+                            '[' => match iter.next() {
+                                Some(v) => {
+                                    let cursor_op = v.context(ErrorKind::GetCharFailed)? as char;
+                                    match cursor_op {
+                                        'A' => onkey(Key::Arrow(ArrowDirection::Up)),
+                                        'B' => onkey(Key::Arrow(ArrowDirection::Down)),
+                                        'C' => onkey(Key::Arrow(ArrowDirection::Left)),
+                                        'D' => onkey(Key::Arrow(ArrowDirection::Right)),
+                                        _ => {
+                                            if !onkey(Key::Escape) {
+                                                false
+                                            } else if !onkey(Key::Ascii(']')) {
+                                                false
+                                            } else {
+                                                onkey(Key::Ascii(cursor_op))
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    if !onkey(Key::Escape) {
+                                        false
+                                    } else {
+                                        onkey(Key::Ascii(opkind))
+                                    }
+                                }
+                            },
+                            _ => {
+                                if !onkey(Key::Escape) {
+                                    false
+                                } else {
+                                    onkey(Key::Ascii(opkind))
+                                }
+                            }
+                        }
+                    }
+                    None => onkey(Key::Escape),
+                }
+            }
             127 => onkey(Key::Delete),
             32...126 => onkey(Key::Ascii(ch as char)),
             _ => onkey(Key::Invalid(ch)),
