@@ -1,5 +1,6 @@
 use failure;
 use shell::exec;
+use std::os::unix::io::RawFd;
 use std::{fmt, result};
 
 pub type Result<T> = result::Result<T, Error>;
@@ -47,6 +48,11 @@ pub enum ErrorKind {
 
     #[fail(display = "failed to modify the file descriptor table (action: {:?})", _0)]
     FdTableMutationFailed(exec::FdAction),
+
+    #[fail(
+        display = "failed to close a pipe file descriptor in the parent process (action: {:?})", _0
+    )]
+    FailedToClosePipeFile(RawFd),
 }
 
 impl Error {

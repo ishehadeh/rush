@@ -5,4 +5,3 @@ pub mod parser;
 pub mod word;
 pub use self::errors::*;
 pub use self::exec::ExecutionEnvironment;
-use nom;

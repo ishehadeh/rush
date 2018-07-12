@@ -4,11 +4,8 @@ use failure::ResultExt;
 use nix::sys::signal;
 use nix::sys::wait;
 use nix::unistd;
-use nix::unistd::{close, dup, dup2, execv, execve, fork, ForkResult, Pid};
-use nom;
 use shell;
 use shell::ast;
-use shell::parser;
 use shell::{Error, ErrorKind, Result};
 use std::collections::{HashMap, VecDeque};
 use std::env::split_paths;
@@ -16,7 +13,6 @@ use std::ffi::CString;
 use std::ffi::{OsStr, OsString};
 use std::os::unix::io::RawFd;
 use std::path;
-use std::path::PathBuf;
 use std::vec::Vec;
 pub type JobId = usize;
 
@@ -68,7 +64,7 @@ pub struct Job {
 #[derive(Debug)]
 pub struct ExecutionEnvironment {
     vars: env::Variables,
-    running_jobs: HashMap<Pid, JobId>,
+    running_jobs: HashMap<unistd::Pid, JobId>,
     queued_jobs: Vec<Job>,
     pub fail_fast: bool,
 }
@@ -77,39 +73,43 @@ fn exec(cmd: &RawCommand, fd_actions: &[FdAction], variables: &[CString]) -> Res
     for a in fd_actions {
         match a {
             FdAction::Dup(fd) => {
-                dup(*fd).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
+                unistd::dup(*fd).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
             }
             FdAction::Move(from, to) => {
-                dup2(*from, *to).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
-                close(*from).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
+                unistd::dup2(*from, *to).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
+                unistd::close(*from).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
             }
             FdAction::Dup2(source, dest) => {
-                dup2(*source, *dest).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
+                unistd::dup2(*source, *dest).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
             }
             FdAction::Close(fd) => {
-                close(*fd).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
+                unistd::close(*fd).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
             }
         }
     }
 
     if variables.len() > 0 {
-        execve(&cmd.executable, &cmd.arguments, variables)
+        unistd::execve(&cmd.executable, &cmd.arguments, variables)
     } else {
-        execv(&cmd.executable, &cmd.arguments)
+        unistd::execv(&cmd.executable, &cmd.arguments)
     }.context(ErrorKind::ExecFailed)?;
     Ok(())
 }
 
-pub fn spawn_raw(cmd: &RawCommand, fd_actions: &[FdAction], variables: &[CString]) -> Result<Pid> {
-    match fork().context(ErrorKind::ForkFailed)? {
-        ForkResult::Child => {
+pub fn spawn_raw(
+    cmd: &RawCommand,
+    fd_actions: &[FdAction],
+    variables: &[CString],
+) -> Result<unistd::Pid> {
+    match unistd::fork().context(ErrorKind::ForkFailed)? {
+        unistd::ForkResult::Child => {
             match exec(cmd, fd_actions, variables) {
                 Ok(_) => (),
                 Err(e) => println!("[rush] before exec: {}", e),
             };
             unreachable!()
         }
-        ForkResult::Parent { child } => Ok(child),
+        unistd::ForkResult::Parent { child } => Ok(child),
     }
 }
 
@@ -250,8 +250,8 @@ impl ExecutionEnvironment {
                 self.launch_job(from_jid)?;
                 self.launch_job(to_jid)?;
 
-                close(stdout);
-                close(stdin);
+                unistd::close(stdout).context(ErrorKind::FailedToClosePipeFile(stdout))?;
+                unistd::close(stdin).context(ErrorKind::FailedToClosePipeFile(stdin))?;
             }
 
             _ => unimplemented!(),
@@ -260,7 +260,7 @@ impl ExecutionEnvironment {
         Ok(())
     }
 
-    pub fn cleanup(&mut self, pid: Pid) -> Result<Option<JobId>> {
+    pub fn cleanup(&mut self, pid: unistd::Pid) -> Result<Option<JobId>> {
         match self.running_jobs.get(&pid) {
             Some(jid) => match self.queued_jobs.iter_mut().nth(*jid) {
                 Some(v) => {
@@ -284,7 +284,7 @@ impl ExecutionEnvironment {
         let mut ret = None;
         sigs.add(signal::Signal::SIGCHLD);
         loop {
-            let sig = sigs.wait().context(ErrorKind::WaitFailed)?;
+            sigs.wait().context(ErrorKind::WaitFailed)?;
 
             loop {
                 match wait::wait().context(ErrorKind::WaitFailed)? {
