@@ -12,11 +12,19 @@ pub mod lang;
 pub mod shell;
 pub mod term;
 
+use std::env::args;
+use std::process::exit;
 fn main() {
     let mut shell = shell::Shell::new();
     let mut environ = lang::ExecutionEnvironment::new();
 
     environ.variables_mut().define("RUSH_VERSION", "0.1.0");
 
-    shell.run(&mut environ);
+    match args().nth(1) {
+        Some(v) => exit(environ.run(v).unwrap_or_else(|e| {
+            println!("{}", e);
+            1
+        })),
+        None => shell.run(&mut environ),
+    }
 }

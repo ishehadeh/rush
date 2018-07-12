@@ -32,7 +32,6 @@ pub enum Action {
     SkipIfNot(ast::SimpleCommand),
     Goto(isize),
     WaitFor(JobId),
-    WaitAll,
     Launch(JobId),
 }
 
@@ -58,7 +57,6 @@ pub struct Job {
     fd_actions: Vec<FdAction>,
     files: Vec<RawFd>,
     variables: Vec<CString>,
-    dependancies: Vec<JobId>,
 }
 
 #[derive(Debug)]
@@ -187,7 +185,6 @@ impl ExecutionEnvironment {
             queue: VecDeque::new(),
             fd_actions: Vec::new(),
             variables: Vec::new(),
-            dependancies: Vec::new(),
         });
 
         Ok(jid)
@@ -218,6 +215,12 @@ impl ExecutionEnvironment {
 
                 self.running_jobs.insert(process, jid);
             }
+            Action::WaitFor(jib) => {
+                self.wait_for(jid)?;
+            }
+            Action::Launch(jib) => {
+                self.launch_job(jib)?;
+            }
             Action::Pipe(from_jid, to_jid) => {
                 let (stdin, stdout) = unistd::pipe().context(ErrorKind::PipelineCreationFailed)?;
                 {
@@ -229,22 +232,6 @@ impl ExecutionEnvironment {
                     let to = self.job_mut(to_jid)?;
                     to.fd_actions.push(FdAction::Move(stdin, 0));
                     to.fd_actions.push(FdAction::Close(stdout));
-                }
-                {
-                    let deps = self.job(from_jid)?.dependancies.clone();
-                    for dep in deps {
-                        let to = self.job_mut(dep)?;
-                        to.fd_actions.push(FdAction::Move(stdout, 1));
-                        to.fd_actions.push(FdAction::Close(stdin))
-                    }
-                }
-                {
-                    let deps = self.job(to_jid)?.dependancies.clone();
-                    for dep in deps {
-                        let to = self.job_mut(dep)?;
-                        to.fd_actions.insert(0, FdAction::Move(stdin, 0));
-                        to.fd_actions.insert(0, FdAction::Close(stdout))
-                    }
                 }
 
                 self.launch_job(from_jid)?;
@@ -274,6 +261,13 @@ impl ExecutionEnvironment {
     }
 
     pub fn wait_for(&mut self, jid: JobId) -> Result<i32> {
+        match self.job(jid)?.status {
+            JobStatus::Finished(e) => return Ok(e),
+            JobStatus::Sleeping => self.launch_job(jid)?,
+            // TODO handle stopped
+            _ => (),
+        };
+
         // it doesn't matter what the handler is doing, but there has to be one for SIGCHLD
         if !traps::is_trapped(signal::Signal::SIGCHLD) {
             traps::trap(signal::Signal::SIGCHLD, traps::Action::NoOp)
@@ -292,22 +286,8 @@ impl ExecutionEnvironment {
                     wait::WaitStatus::Exited(pid, exit_code) => match self.cleanup(pid)? {
                         Some(finished_jid) => {
                             self.job_mut(finished_jid)?.status = JobStatus::Finished(exit_code);
-                            let job = self.job_mut(jid)?;
-                            let is_dep = job
-                                .dependancies
-                                .iter()
-                                .position(|&x| x == finished_jid)
-                                .map(|e| job.dependancies.remove(e))
-                                .is_some();
 
-                            if job.dependancies.len() == 0 && !is_dep {
-                                if finished_jid == jid {
-                                    ret = Some(exit_code);
-                                }
-                            } else if is_dep
-                                && job.dependancies.len() == 0
-                                && job.status == JobStatus::Sleeping
-                            {
+                            if finished_jid == jid {
                                 ret = Some(exit_code);
                             }
                         }
@@ -341,7 +321,8 @@ impl ExecutionEnvironment {
                 self.add_command_to_job(p.from.clone(), from)?;
                 self.add_command_to_job(p.to.clone(), to)?;
                 self.job_mut(job)?.queue.push_back(Action::Pipe(from, to));
-                self.job_mut(job)?.dependancies.extend(&[from, to]);
+                self.job_mut(job)?.queue.push_back(Action::WaitFor(from));
+                self.job_mut(job)?.queue.push_back(Action::WaitFor(to));
             }
 
             lang::ast::Command::FileRedirect(r) => {
