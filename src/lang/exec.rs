@@ -363,6 +363,14 @@ impl ExecutionEnvironment {
         Ok(())
     }
 
+    pub fn variables<'a>(&'a self) -> &'a env::Variables {
+        &self.vars
+    }
+
+    pub fn variables_mut<'a>(&'a mut self) -> &'a mut env::Variables {
+        &mut self.vars
+    }
+
     pub fn make_job(&mut self, cmd: ast::Command) -> Result<JobId> {
         let job = self.schedule()?;
         self.add_command_to_job(cmd, job)?;

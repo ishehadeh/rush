@@ -11,15 +11,9 @@ pub mod expr;
 pub mod lang;
 pub mod term;
 
+use std::ffi::OsString;
 use std::io;
 use std::io::Write;
-
-const PREFIX: &'static str = "rush-0.1$";
-
-fn reset_line() {
-    term::newline();
-    print!("{} ", PREFIX);
-}
 
 pub struct Shell {
     command_buffer: String,
@@ -35,7 +29,6 @@ impl Shell {
     }
 
     pub fn readline(&mut self) -> term::Result<String> {
-        print!("{} ", PREFIX);
         io::stdout().flush();
         self.command_buffer.clear();
 
@@ -50,7 +43,7 @@ impl Shell {
                     if c == 'C' {
                         print!("^{}", c);
                         self.command_buffer.clear();
-                        reset_line();
+                        return false;
                     }
                 }
                 term::Key::Newline => return false,
@@ -92,7 +85,22 @@ fn print_error<T: failure::Fail>(e: T) {
 fn main() {
     let mut shell = Shell::new();
     let mut exe = lang::ExecutionEnvironment::new();
+    let prefix_command = exe
+        .variables()
+        .value(&OsString::from("RUSH_PREFIX"))
+        .to_string_lossy()
+        .to_string();
+
+    let prefix = lang::ast::Command::from(if prefix_command.is_empty() {
+        "printf 'rush-%s$ ' \"$RUSH_VERSION\"".to_string()
+    } else {
+        prefix_command
+    });
+
+    exe.variables_mut().define("RUSH_VERSION", "0.1.0");
+
     while !shell.exit_requested() {
+        exe.run(prefix.clone());
         let buffer = match shell.readline() {
             Ok(v) => v,
             Err(e) => {
