@@ -34,61 +34,63 @@ pub fn newline() {
     ansi::cursor_column(1);
 }
 
+pub fn getch() -> Option<u8> {
+    let mut bytes: [u8; 1] = [0; 1];
+    let read = io::stdin().read(&mut bytes).unwrap_or(0);
+    if read == 0 {
+        None
+    } else {
+        Some(bytes[0])
+    }
+}
+
 pub fn take_terminal<F>(mut onkey: F) -> Result<()>
 where
     F: FnMut(Key) -> bool,
 {
     let original = init_raw_mode(0)?;
-    for c in io::stdin().bytes() {
-        let ch = c.context(ErrorKind::GetCharFailed)?;
+
+    loop {
+        let ch = match getch() {
+            Some(v) => v,
+            None => continue,
+        };
+
         if !match ch {
             0...12 => onkey(Key::Control((ch + 64) as char)),
             13 => onkey(Key::Newline),
-            27 => {
-                let mut iter = io::stdin().bytes();
-                match iter.next() {
+            27 => match getch() {
+                Some(91) => match getch() {
+                    Some(65) => onkey(Key::Arrow(ArrowDirection::Up)),
+                    Some(66) => onkey(Key::Arrow(ArrowDirection::Down)),
+                    Some(67) => onkey(Key::Arrow(ArrowDirection::Left)),
+                    Some(68) => onkey(Key::Arrow(ArrowDirection::Right)),
                     Some(v) => {
-                        let opkind = v.context(ErrorKind::GetCharFailed)? as char;
-                        match opkind {
-                            '[' => match iter.next() {
-                                Some(v) => {
-                                    let cursor_op = v.context(ErrorKind::GetCharFailed)? as char;
-                                    match cursor_op {
-                                        'A' => onkey(Key::Arrow(ArrowDirection::Up)),
-                                        'B' => onkey(Key::Arrow(ArrowDirection::Down)),
-                                        'C' => onkey(Key::Arrow(ArrowDirection::Left)),
-                                        'D' => onkey(Key::Arrow(ArrowDirection::Right)),
-                                        _ => {
-                                            if !onkey(Key::Escape) {
-                                                false
-                                            } else if !onkey(Key::Ascii(']')) {
-                                                false
-                                            } else {
-                                                onkey(Key::Ascii(cursor_op))
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    if !onkey(Key::Escape) {
-                                        false
-                                    } else {
-                                        onkey(Key::Ascii(opkind))
-                                    }
-                                }
-                            },
-                            _ => {
-                                if !onkey(Key::Escape) {
-                                    false
-                                } else {
-                                    onkey(Key::Ascii(opkind))
-                                }
-                            }
+                        if !onkey(Key::Escape) {
+                            false
+                        } else if !onkey(Key::Ascii(']')) {
+                            false
+                        } else {
+                            onkey(Key::Ascii(v as char))
                         }
                     }
-                    None => onkey(Key::Escape),
+                    None => {
+                        if !onkey(Key::Escape) {
+                            false
+                        } else {
+                            onkey(Key::Ascii('['))
+                        }
+                    }
+                },
+                Some(v) => {
+                    if !onkey(Key::Escape) {
+                        false
+                    } else {
+                        onkey(Key::Ascii(v as char))
+                    }
                 }
-            }
+                None => onkey(Key::Escape),
+            },
             127 => onkey(Key::Delete),
             32...126 => onkey(Key::Ascii(ch as char)),
             _ => onkey(Key::Invalid(ch)),
@@ -108,6 +110,8 @@ fn init_raw_mode(fd: RawFd) -> Result<termios::Termios> {
 
     termios::cfmakeraw(&mut raw_termios); // TODO do this manually
     raw_termios.local_flags.remove(LocalFlags::ICANON);
+    raw_termios.control_chars[termios::SpecialCharacterIndices::VTIME as usize] = 10;
+    raw_termios.control_chars[termios::SpecialCharacterIndices::VMIN as usize] = 0;
     termios::tcsetattr(0, termios::SetArg::TCSAFLUSH, &raw_termios)
         .context(ErrorKind::InitRawModeFailed)?;
     Ok(original_termios)
