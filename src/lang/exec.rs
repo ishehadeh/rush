@@ -1,12 +1,12 @@
 use env;
 use env::traps;
 use failure::ResultExt;
+use lang;
+use lang::ast;
+use lang::{Error, ErrorKind, Result};
 use nix::sys::signal;
 use nix::sys::wait;
 use nix::unistd;
-use shell;
-use shell::ast;
-use shell::{Error, ErrorKind, Result};
 use std::collections::{HashMap, VecDeque};
 use std::env::split_paths;
 use std::ffi::CString;
@@ -136,7 +136,7 @@ impl ExecutionEnvironment {
         Err(Error::from(ErrorKind::MissingExecutable(owned_prog)))
     }
 
-    pub fn make_raw_command(&mut self, cmd: &shell::ast::SimpleCommand) -> Result<RawCommand> {
+    pub fn make_raw_command(&mut self, cmd: &lang::ast::SimpleCommand) -> Result<RawCommand> {
         let mut iter = cmd.arguments.iter();
         let first = iter.next().unwrap().compile(&mut self.vars)?;
         let exe = self.find_executable(&first)?;
@@ -304,7 +304,10 @@ impl ExecutionEnvironment {
                                 if finished_jid == jid {
                                     ret = Some(exit_code);
                                 }
-                            } else if is_dep && job.status == JobStatus::Sleeping {
+                            } else if is_dep
+                                && job.dependancies.len() == 0
+                                && job.status == JobStatus::Sleeping
+                            {
                                 ret = Some(exit_code);
                             }
                         }
@@ -322,17 +325,17 @@ impl ExecutionEnvironment {
 
     fn add_command_to_job(&mut self, cmd: ast::Command, job: JobId) -> Result<()> {
         match cmd {
-            shell::ast::Command::SimpleCommand(sc) => {
+            lang::ast::Command::SimpleCommand(sc) => {
                 self.job_mut(job)?.queue.push_back(Action::Execute(sc));
             }
 
-            shell::ast::Command::Group(g) => {
+            lang::ast::Command::Group(g) => {
                 for c in g.commands {
                     self.add_command_to_job(c, job)?;
                 }
             }
 
-            shell::ast::Command::Pipeline(p) => {
+            lang::ast::Command::Pipeline(p) => {
                 let from = self.fork(job)?;
                 let to = self.fork(job)?;
                 self.add_command_to_job(p.from.clone(), from)?;
@@ -341,7 +344,7 @@ impl ExecutionEnvironment {
                 self.job_mut(job)?.dependancies.extend(&[from, to]);
             }
 
-            shell::ast::Command::FileRedirect(r) => {
+            lang::ast::Command::FileRedirect(r) => {
                 self.add_command_to_job(r.left.clone(), job)?;
                 for redir in r.redirects {
                     match redir.operation {

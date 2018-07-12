@@ -1,9 +1,9 @@
 use env;
 use expr;
 use failure::ResultExt;
+use lang::{ErrorKind, Result};
 use nom;
 use nom::types::CompleteStr;
-use shell::{ErrorKind, Result};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Token {
@@ -181,7 +181,7 @@ impl Word {
                     '|' => '|',
                     '\n' => '\n',
                     '`' => '`',
-                    _ => '�',
+                    _ => '\u{FFFD}',
                 }),
                 Token::Quoted(v) => s.extend(v.compile(vars)?.chars()),
                 _ => unimplemented!(),

@@ -1,5 +1,5 @@
 use failure;
-use shell::exec;
+use lang::exec;
 use std::os::unix::io::RawFd;
 use std::{fmt, result};
 

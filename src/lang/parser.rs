@@ -1,7 +1,7 @@
+use lang::ast::*;
+use lang::word::word;
 ///! Nom combinations for parsing RUSH shell scripts
 use nom::types::CompleteStr;
-use shell::ast::*;
-use shell::word::word;
 use std::os::unix::io::RawFd;
 use std::str::FromStr;
 

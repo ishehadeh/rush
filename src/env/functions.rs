@@ -1,4 +1,4 @@
-use shell::ast;
+use lang::ast;
 use std::collections::btree_map;
 use std::collections::BTreeMap;
 
