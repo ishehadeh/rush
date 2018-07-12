@@ -74,10 +74,11 @@ impl Shell {
         self.command_buffer.clear();
 
         let mut hist_index = self.history.len();
+        let mut xoffset = 0;
         term::take_terminal(|k| {
             let backtrack = self.command_buffer.len();
-            if backtrack != 0 {
-                term::ansi::cursor_left(backtrack);
+            if backtrack != 0 && backtrack != xoffset {
+                term::ansi::cursor_left(backtrack - xoffset);
             }
 
             match k {
@@ -98,11 +99,19 @@ impl Shell {
                 term::Key::Delete => {
                     if self.command_buffer.len() > 0 {
                         term::ansi::erase_line(term::ansi::ClearType::AfterCursor);
-                        self.command_buffer.pop();
+                        if xoffset == 0 {
+                            self.command_buffer.pop();
+                        } else {
+                            self.command_buffer.remove(backtrack - xoffset - 1);
+                        }
                     }
                 }
                 term::Key::Ascii(c) => {
-                    self.command_buffer.push(c);
+                    if xoffset == 0 {
+                        self.command_buffer.push(c);
+                    } else {
+                        self.command_buffer.insert(backtrack - xoffset, c);
+                    }
                 }
                 term::Key::Arrow(d) => match d {
                     term::ArrowDirection::Up => if hist_index != 0 {
@@ -115,11 +124,19 @@ impl Shell {
                         term::ansi::erase_line(term::ansi::ClearType::AfterCursor);
                         self.command_buffer = self.history[hist_index].clone();
                     },
-                    _ => (),
+                    term::ArrowDirection::Left => if xoffset > 0 {
+                        xoffset -= 1
+                    },
+                    term::ArrowDirection::Right => if xoffset < backtrack {
+                        xoffset += 1
+                    },
                 },
                 term::Key::Invalid(_) => print!("\u{FFFD}"),
             };
             print!("{}", self.command_buffer);
+            if xoffset != 0 {
+                term::ansi::cursor_left(xoffset);
+            }
             io::stdout().flush();
             true
         })?;
