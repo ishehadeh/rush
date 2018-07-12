@@ -3,21 +3,21 @@ use std::os::unix::io::RawFd;
 use std::vec::Vec;
 
 #[derive(Debug, Clone)]
-pub enum Command<'a> {
-    SimpleCommand(SimpleCommand<'a>),
-    Pipeline(Box<Pipeline<'a>>),
-    FileRedirect(Box<FileRedirect<'a>>),
-    ConditionalPair(Box<ConditionalPair<'a>>),
+pub enum Command {
+    SimpleCommand(SimpleCommand),
+    Pipeline(Box<Pipeline>),
+    FileRedirect(Box<FileRedirect>),
+    ConditionalPair(Box<ConditionalPair>),
 
-    Group(Box<CommandGroup<'a>>),
-    BraceGroup(Box<CommandGroup<'a>>),
-    SubShell(Box<CommandGroup<'a>>),
+    Group(Box<CommandGroup>),
+    BraceGroup(Box<CommandGroup>),
+    SubShell(Box<CommandGroup>),
 
-    If(Box<If<'a>>),
-    Case(Box<Case<'a>>),
-    While(Box<While<'a>>),
-    For(Box<For<'a>>),
-    Until(Box<Until<'a>>),
+    If(Box<If>),
+    Case(Box<Case>),
+    While(Box<While>),
+    For(Box<For>),
+    Until(Box<Until>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,84 +47,84 @@ pub enum IoOperation {
 }
 
 #[derive(Debug, Clone)]
-pub struct SimpleCommand<'a> {
-    pub arguments: Vec<Word<'a>>,
+pub struct SimpleCommand {
+    pub arguments: Vec<Word>,
 }
 
 #[derive(Debug, Clone)]
-pub struct CommandGroup<'a> {
-    pub commands: Vec<Command<'a>>,
+pub struct CommandGroup {
+    pub commands: Vec<Command>,
 }
 
 #[derive(Debug, Clone)]
-pub struct If<'a> {
-    pub condition: Command<'a>,
-    pub success: Command<'a>,
-    pub failure: Command<'a>,
+pub struct If {
+    pub condition: Command,
+    pub success: Command,
+    pub failure: Command,
 }
 
 #[derive(Debug, Clone)]
-pub struct While<'a> {
-    pub condition: Command<'a>,
-    pub body: Command<'a>,
+pub struct While {
+    pub condition: Command,
+    pub body: Command,
 }
 
 #[derive(Debug, Clone)]
-pub struct Until<'a> {
-    pub condition: Command<'a>,
-    pub body: Command<'a>,
+pub struct Until {
+    pub condition: Command,
+    pub body: Command,
 }
 
 #[derive(Debug, Clone)]
-pub struct For<'a> {
-    pub condition: Command<'a>,
-    pub body: Command<'a>,
+pub struct For {
+    pub condition: Command,
+    pub body: Command,
 }
 
 #[derive(Debug, Clone)]
-pub struct Function<'a> {
-    pub name: Word<'a>,
-    pub body: Command<'a>,
+pub struct Function {
+    pub name: Word,
+    pub body: Command,
 }
 
 #[derive(Debug, Clone)]
-pub struct Case<'a> {
-    pub input: Word<'a>,
-    pub cases: Vec<(Word<'a>, Command<'a>)>,
+pub struct Case {
+    pub input: Word,
+    pub cases: Vec<(Word, Command)>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Pipeline<'a> {
+pub struct Pipeline {
     pub bang: bool,
-    pub from: Command<'a>,
-    pub to: Command<'a>,
+    pub from: Command,
+    pub to: Command,
 }
 
 #[derive(Debug, Clone)]
-pub struct ConditionalPair<'a> {
-    pub left: Command<'a>,
+pub struct ConditionalPair {
+    pub left: Command,
     pub operator: ConditionOperator,
-    pub right: Command<'a>,
+    pub right: Command,
 }
 
 #[derive(Debug, Clone)]
-pub struct RedirectDestination<'a> {
+pub struct RedirectDestination {
     pub operation: IoOperation,
     pub fd: Option<RawFd>,
-    pub file: Word<'a>,
+    pub file: Word,
 }
 
 #[derive(Debug, Clone)]
-pub struct FileRedirect<'a> {
-    pub left: Command<'a>,
-    pub redirects: Vec<RedirectDestination<'a>>,
+pub struct FileRedirect {
+    pub left: Command,
+    pub redirects: Vec<RedirectDestination>,
 }
 
-impl<'a> RedirectDestination<'a> {
+impl RedirectDestination {
     pub fn new(
         operation: IoOperation,
         fd: Option<RawFd>,
-        file: Option<Word<'a>>,
+        file: Option<Word>,
     ) -> RedirectDestination {
         RedirectDestination {
             operation: operation,
@@ -134,12 +134,23 @@ impl<'a> RedirectDestination<'a> {
     }
 }
 
-impl<'a> Command<'a> {
-    pub fn simple(args: Vec<Word<'a>>) -> Command<'a> {
+impl<T> From<T> for Command
+where
+    T: AsRef<str>,
+{
+    fn from(s: T) -> Command {
+        use nom::types::CompleteStr;
+        use shell::parser::commandline;
+        commandline(CompleteStr(s.as_ref())).unwrap().1
+    }
+}
+
+impl Command {
+    pub fn simple(args: Vec<Word>) -> Command {
         Command::SimpleCommand(SimpleCommand { arguments: args })
     }
 
-    pub fn pipeline(bang: bool, source: Command<'a>, dest: Command<'a>) -> Command<'a> {
+    pub fn pipeline(bang: bool, source: Command, dest: Command) -> Command {
         Command::Pipeline(Box::new(Pipeline {
             bang: bang,
             from: source,
@@ -147,11 +158,7 @@ impl<'a> Command<'a> {
         }))
     }
 
-    pub fn conditional(
-        left: Command<'a>,
-        infix: ConditionOperator,
-        right: Command<'a>,
-    ) -> Command<'a> {
+    pub fn conditional(left: Command, infix: ConditionOperator, right: Command) -> Command {
         Command::ConditionalPair(Box::new(ConditionalPair {
             left: left,
             operator: infix,
@@ -159,14 +166,14 @@ impl<'a> Command<'a> {
         }))
     }
 
-    pub fn redirect(source: Command<'a>, redir: Vec<RedirectDestination<'a>>) -> Command<'a> {
+    pub fn redirect(source: Command, redir: Vec<RedirectDestination>) -> Command {
         Command::FileRedirect(Box::new(FileRedirect {
             left: source,
             redirects: redir,
         }))
     }
 
-    pub fn group(source: Vec<Command<'a>>) -> Command<'a> {
+    pub fn group(source: Vec<Command>) -> Command {
         Command::Group(Box::new(CommandGroup { commands: source }))
     }
 }

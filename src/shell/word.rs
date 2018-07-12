@@ -5,40 +5,40 @@ use nom;
 use nom::types::CompleteStr;
 use shell::{ErrorKind, Result};
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Token<'a> {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Token {
     Tilde,
     WildcardString,
     WildcardChar,
-    Unquoted(Word<'a>),
-    Quoted(Word<'a>),
-    Multi(Vec<Word<'a>>),
+    Unquoted(Word),
+    Quoted(Word),
+    Multi(Vec<Word>),
     Regex,
     Escape(char),
-    Parameter(&'a str, char, Word<'a>),
-    Variable(&'a str),
-    Command(Word<'a>),
-    Expr(Word<'a>),
-    QuotedCommand(&'a str),
-    Slice(&'a str),
+    Parameter(String, char, Word),
+    Variable(String),
+    Command(Word),
+    Expr(Word),
+    QuotedCommand(String),
+    Slice(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Word<'a> {
-    parts: Vec<Token<'a>>,
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Word {
+    parts: Vec<Token>,
 }
 
-pub fn sigiled_expression<'a>(i: CompleteStr<'a>) -> nom::IResult<CompleteStr<'a>, Token<'a>, u32> {
-    alt!(i,
+named!(
+    pub sigiled_expression<CompleteStr, Token>,
+    alt!(
         delimited!(tag!("(("), expression_word, tag!("))")) => {|x| Token::Expr(x)}
-        | take_while!(|x| (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z') || x == '_') => {|x : CompleteStr<'a>| Token::Variable(x.0)}
+        | take_while!(|x| (x >= 'a' && x <= 'z') || (x >= 'A' && x <= 'Z') || x == '_') => {|x : CompleteStr| Token::Variable(x.0.to_string())}
     )
-}
+);
 
-pub fn expression_word<'a>(i: CompleteStr<'a>) -> nom::IResult<CompleteStr<'a>, Word<'a>, u32> {
-    map!(
-        i,
-        many0!(preceded!(
+named!(
+    pub expression_word<CompleteStr, Word>,
+    map!(many0!(preceded!(
             not!(tag!("))")),
             alt!(
                 preceded!(char!('\\'),
@@ -57,17 +57,16 @@ pub fn expression_word<'a>(i: CompleteStr<'a>) -> nom::IResult<CompleteStr<'a>, 
                     char!('"')
                 ) => { |c| Token::Quoted(Word::from(c)) }
                 | preceded!(char!('$'), sigiled_expression) => {|w| w}
-                | take_until_either1!(")\"") => {|x : CompleteStr<'a>| Token::Slice(x.0)}
+                | take_until_either1!(")\"") => {|x : CompleteStr| Token::Slice(x.0.to_string())}
             )
         )),
         |x| Word::from(x)
     )
-}
+);
 
-pub fn double_quoted_token<'a>(
-    i: CompleteStr<'a>,
-) -> nom::IResult<CompleteStr<'a>, Token<'a>, u32> {
-    alt!(i,
+named!{
+    pub double_quoted_token<CompleteStr, Token>,
+    alt!(
         preceded!(char!('\\'),
             alt!(
                 char!('"')
@@ -79,26 +78,24 @@ pub fn double_quoted_token<'a>(
             )
         ) => {|c| Token::Escape(c)}
         | preceded!(char!('$'), sigiled_expression) => {|w| w}
-        | take_until_either1!("\\$\"") => {|x : CompleteStr<'a>| Token::Slice(x.0)}
+        | take_until_either1!("\\$\"") => {|x : CompleteStr| Token::Slice(x.0.to_string())}
     )
 }
 
-pub fn single_quoted_token<'a>(
-    i: CompleteStr<'a>,
-) -> nom::IResult<CompleteStr<'a>, Token<'a>, u32> {
-    alt!(i,
-        preceded!(char!('\\'),
+named!(
+    pub single_quoted_token<CompleteStr, Token>,
+    alt!(preceded!(char!('\\'),
             alt!(
                 char!('\'')
                 | char!('\\')
             )) => {|c| Token::Escape(c)}
-        | take_until_either1!("'") => {|x : CompleteStr<'a>| Token::Slice(x.0)}
+        | take_until_either1!("'") => {|x : CompleteStr| Token::Slice(x.0.to_string())}
     )
-}
+);
 
-pub fn unquoted_token<'a>(i: CompleteStr<'a>) -> nom::IResult<CompleteStr<'a>, Token<'a>, u32> {
-    alt!(i,
-        preceded!(char!('\\'),
+named!(
+    pub unquoted_token<CompleteStr, Token>,
+    alt!(preceded!(char!('\\'),
             alt!(
                 char!('"')
                 | char!('\\')
@@ -123,13 +120,12 @@ pub fn unquoted_token<'a>(i: CompleteStr<'a>) -> nom::IResult<CompleteStr<'a>, T
                 many0!(single_quoted_token),
             char!('\'')
         ) => { |c| Token::Quoted(Word::from(c)) }
-        | take_while1!(|c : char| c != '"' && c != '\'' &&  c != '|' && c != '\\' && c != '$' && !nom::is_space(c as u8)) => {|x : CompleteStr<'a>| Token::Slice(x.0)}
+        | take_while1!(|c : char| c != '"' && c != '\'' &&  c != '|' && c != '\\' && c != '$' && !nom::is_space(c as u8)) => {|x : CompleteStr| Token::Slice(x.0.to_string())}
     )
-}
+);
 
 named!(pub word<CompleteStr, Word>,
-    map!(
-        many0!(alt!(
+    map!(many0!(alt!(
             unquoted_token
             | delimited!(char!('\''), many0!(single_quoted_token), char!('\'')) => {|x| Token::Quoted(Word::from(x))}
             | delimited!(char!('"'), many0!(double_quoted_token), char!('"')) => {|x| Token::Quoted(Word::from(x))}
@@ -138,17 +134,23 @@ named!(pub word<CompleteStr, Word>,
     )
 );
 
-impl<'a> Word<'a> {
-    pub fn new() -> Word<'a> {
+impl<T> From<T> for Word
+where
+    T: IntoIterator<Item = Token>,
+{
+    fn from(v: T) -> Word {
+        Word {
+            parts: v.into_iter().collect(),
+        }
+    }
+}
+
+impl Word {
+    pub fn new() -> Word {
         Word { parts: Vec::new() }
     }
-
-    pub fn from(toks: Vec<Token<'a>>) -> Word<'a> {
-        Word { parts: toks }
-    }
-
-    pub fn parse(s: &'a str) -> Word<'a> {
-        word(CompleteStr(s)).unwrap().1
+    pub fn parse<T: AsRef<str>>(s: T) -> Word {
+        word(CompleteStr(s.as_ref())).unwrap().1
     }
 
     pub fn compile(&self, vars: &mut env::Variables) -> Result<String> {
@@ -165,7 +167,7 @@ impl<'a> Word<'a> {
                     let evaluated: String = expr::eval(v.compile(vars)?.as_str(), vars)
                         .context(ErrorKind::ExpressionError)?;
                     s.push_str(&evaluated)
-                } // TODO error handling
+                }
                 Token::Variable(v) => {
                     s.push_str(vars.value(&OsString::from(v)).to_str().unwrap_or(""))
                 }

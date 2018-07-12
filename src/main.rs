@@ -10,17 +10,16 @@ pub mod env;
 pub mod expr;
 pub mod shell;
 
+use failure::Fail;
 use std::env::args;
-
 fn main() {
     let arg1 = args().next_back().unwrap();
     let mut exe = shell::ExecutionEnvironment::new();
-    let false_job = exe.spawn(shell::parse("false")).unwrap();
-    exe.spawn(shell::parse("echo hi"));
 
     println!(
         "\"{}\" exited with exit code {}",
         arg1,
-        exe.run_str(&arg1).unwrap_or_else(|e| panic!("{}", e))
+        exe.run(&arg1)
+            .unwrap_or_else(|e| panic!("{} [reason: {:?}]", e, e.cause()))
     );
 }

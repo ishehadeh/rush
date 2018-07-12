@@ -99,7 +99,7 @@ named!(
 named!(
     pub simple_command<CompleteStr, Command>,
     do_parse!(
-        args: separated_list!(space, word) >>
+        args: separated_list!(space, preceded!(not!(io_number), word)) >>
         (Command::simple(args))
     )
 );
