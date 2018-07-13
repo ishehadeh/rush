@@ -4,6 +4,7 @@ pub use self::error::*;
 use failure::ResultExt;
 use nix::sys::termios;
 use nix::sys::termios::LocalFlags;
+use std::collections::VecDeque;
 use std::io;
 use std::io::Read;
 use std::os::unix::io::RawFd;
@@ -27,6 +28,12 @@ pub enum Key {
     Invalid(u8),
 }
 
+pub struct Keys<T: io::Read> {
+    // Keys may need to be buffered if we have to back out of an escape code
+    buffer: VecDeque<Key>,
+    stream: T,
+}
+
 pub fn newline() {
     ansi::scroll_down(1);
     ansi::cursor_down(1);
@@ -34,13 +41,11 @@ pub fn newline() {
     ansi::cursor_column(1);
 }
 
-pub fn getch() -> Option<u8> {
-    let mut bytes: [u8; 1] = [0; 1];
-    let read = io::stdin().read(&mut bytes).unwrap_or(0);
-    if read == 0 {
-        None
-    } else {
-        Some(bytes[0])
+/// Get an iterator over the users keystrokes from `STDIN`.
+pub fn keys<'a>() -> Keys<io::Stdin> {
+    Keys {
+        buffer: VecDeque::with_capacity(4),
+        stream: io::stdin(),
     }
 }
 
@@ -50,51 +55,8 @@ where
 {
     let original = init_raw_mode(0)?;
 
-    loop {
-        let ch = match getch() {
-            Some(v) => v,
-            None => continue,
-        };
-
-        if !match ch {
-            0...12 => onkey(Key::Control((ch + 64) as char)),
-            13 => onkey(Key::Newline),
-            27 => match getch() {
-                Some(91) => match getch() {
-                    Some(65) => onkey(Key::Arrow(ArrowDirection::Up)),
-                    Some(66) => onkey(Key::Arrow(ArrowDirection::Down)),
-                    Some(67) => onkey(Key::Arrow(ArrowDirection::Left)),
-                    Some(68) => onkey(Key::Arrow(ArrowDirection::Right)),
-                    Some(v) => {
-                        if !onkey(Key::Escape) {
-                            false
-                        } else if !onkey(Key::Ascii(']')) {
-                            false
-                        } else {
-                            onkey(Key::Ascii(v as char))
-                        }
-                    }
-                    None => {
-                        if !onkey(Key::Escape) {
-                            false
-                        } else {
-                            onkey(Key::Ascii('['))
-                        }
-                    }
-                },
-                Some(v) => {
-                    if !onkey(Key::Escape) {
-                        false
-                    } else {
-                        onkey(Key::Ascii(v as char))
-                    }
-                }
-                None => onkey(Key::Escape),
-            },
-            127 => onkey(Key::Delete),
-            32...126 => onkey(Key::Ascii(ch as char)),
-            _ => onkey(Key::Invalid(ch)),
-        } {
+    for key in keys() {
+        if !onkey(key?) {
             break;
         }
     }
@@ -102,6 +64,78 @@ where
     termios::tcsetattr(0, termios::SetArg::TCSAFLUSH, &original)
         .context(ErrorKind::ExitRawModeFailed)?;
     Ok(())
+}
+
+impl<T> Keys<T>
+where
+    T: Read,
+{
+    fn getch(&mut self) -> Result<Option<u8>> {
+        let mut c: [u8; 1] = [0; 1];
+        let read = self.stream.read(&mut c).context(ErrorKind::GetCharFailed)?;
+        if read == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(c[0]))
+        }
+    }
+
+    fn getkey(&mut self) -> Result<Key> {
+        // get the next character, or if there isn't one return `Timeout`
+
+        let mut c = self.getch()?;
+        while c.is_none() {
+            c = self.getch()?;
+        }
+        let ch = c.unwrap();
+
+        Ok(match ch {
+            0...12 => Key::Control((ch + 64) as char),
+            13 => Key::Newline,
+            27 => match self.getch()? {
+                Some(91) => match self.getch()? {
+                    Some(65) => Key::Arrow(ArrowDirection::Up),
+                    Some(66) => Key::Arrow(ArrowDirection::Down),
+                    Some(67) => Key::Arrow(ArrowDirection::Left),
+                    Some(68) => Key::Arrow(ArrowDirection::Right),
+                    Some(v) => {
+                        self.buffer.push_back(Key::Escape);
+                        self.buffer.push_back(Key::Ascii(']'));
+                        Key::Ascii(v as char)
+                    }
+                    None => {
+                        self.buffer.push_back(Key::Escape);
+                        Key::Ascii('[')
+                    }
+                },
+                Some(v) => {
+                    self.buffer.push_back(Key::Escape);
+                    Key::Ascii(v as char)
+                }
+                None => Key::Escape,
+            },
+            127 => Key::Delete,
+            32...126 => Key::Ascii(ch as char),
+            _ => Key::Invalid(ch),
+        })
+    }
+}
+
+impl<T> Iterator for Keys<T>
+where
+    T: Read,
+{
+    type Item = Result<Key>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // if a key is in the buffer then return it
+        match self.buffer.pop_front() {
+            Some(v) => return Some(Ok(v)),
+            None => (),
+        };
+
+        Some(self.getkey())
+    }
 }
 
 fn init_raw_mode(fd: RawFd) -> Result<termios::Termios> {

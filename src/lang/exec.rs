@@ -258,11 +258,13 @@ impl ExecutionEnvironment {
                 for _ in 0..(count - 1) {
                     pipes.push(unistd::pipe().context(ErrorKind::PipelineCreationFailed)?);
                 }
+                let my_actions = self.job(jid)?.fd_actions.clone();
 
                 let mut pipe = 0;
                 {
                     let stdout = pipes[0].1;
                     let j = self.job_mut(jids[0])?;
+                    j.fd_actions.extend(my_actions.iter());
                     j.fd_actions.push(FdAction::Move(stdout, 1));
                     for (close_stdin, close_stdout) in pipes.iter() {
                         if *close_stdout != stdout {
@@ -273,11 +275,12 @@ impl ExecutionEnvironment {
                     pipe += 1;
                 }
 
-                for jid in 1..(count - 1) {
+                for jid_idx in 1..(count - 1) {
                     let stdin = pipes[pipe - 1].0;
                     let stdout = pipes[pipe].1;
 
-                    let j = self.job_mut(jids[jid])?;
+                    let j = self.job_mut(jids[jid_idx])?;
+                    j.fd_actions.extend(my_actions.iter());
                     j.fd_actions.push(FdAction::Move(stdout, 1));
                     j.fd_actions.push(FdAction::Move(stdin, 0));
 
@@ -295,7 +298,9 @@ impl ExecutionEnvironment {
                 {
                     let stdin = pipes[count - 2].0;
                     let j = self.job_mut(jids[count - 1])?;
+                    j.fd_actions.extend(my_actions.iter());
                     j.fd_actions.push(FdAction::Move(stdin, 0));
+
                     for (close_stdin, close_stdout) in pipes.iter() {
                         if *close_stdin != stdin {
                             j.fd_actions.push(FdAction::Close(*close_stdin));
@@ -398,20 +403,19 @@ impl ExecutionEnvironment {
 
             lang::ast::Command::Pipeline(p) => {
                 let mut pipe = p;
-                let from = self.make_job(pipe.from.clone())?;
-                self.add_command_to_job(pipe.to.clone(), from)?;
-                let mut list = vec![from];
+                let to = self.make_job(pipe.to.clone())?;
+                let mut list = vec![to];
 
                 loop {
                     match pipe.from {
                         ast::Command::Pipeline(child_pipe) => {
-                            let from = self.make_job(child_pipe.to.clone())?;
-                            list.push(from);
+                            let to = self.make_job(child_pipe.to.clone())?;
+                            list.push(to);
                             pipe = child_pipe;
                         }
                         _ => {
-                            let to = self.make_job(pipe.from.clone())?;
-                            list.push(to);
+                            let from = self.make_job(pipe.from.clone())?;
+                            list.push(from);
                             self.job_mut(job)?
                                 .queue
                                 .push_back(Action::Pipe(list.iter().rev().map(|x| *x).collect()));
@@ -455,9 +459,10 @@ impl ExecutionEnvironment {
                     match redir.operation {
                         ast::IoOperation::OutputDupFd => {
                             let fd2 = redir.file.compile(&mut self.vars)?;
-                            self.job_mut(job)?
-                                .fd_actions
-                                .push(FdAction::Dup2(redir.fd.unwrap_or(1), fd2.parse().unwrap())); // TODO error handling
+                            self.job_mut(job)?.fd_actions.insert(
+                                0,
+                                FdAction::Dup2(fd2.parse().unwrap(), redir.fd.unwrap_or(1)),
+                            ); // TODO error handling
                         }
                         _ => unimplemented!(),
                     }

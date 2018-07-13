@@ -115,9 +115,14 @@ named!(
 );
 
 named!(
+    pub group<CompleteStr, Command>,
+    sp!(delimited!(char!('{'), sp!(commandline), char!('}')))
+);
+
+named!(
     pub redirect<CompleteStr, Command>,
     do_parse!(
-        command  : sp!(simple_command) >>
+        command  : sp!(alt!(group | simple_command)) >>
         redirect : opt!(many1!(sp!(redirect_destination))) >>
         (match redirect {
             Some(v) => Command::redirect(command, v),

@@ -19,6 +19,9 @@ pub enum ErrorKind {
 
     #[fail(display = "failed to get the next character")]
     GetCharFailed,
+
+    #[fail(display = "failed to read the next keystroke")]
+    ReadKeyFailed,
 }
 
 impl Error {
