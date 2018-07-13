@@ -13,7 +13,9 @@ use std::ffi::CString;
 use std::ffi::{OsStr, OsString};
 use std::os::unix::io::RawFd;
 use std::path;
+use std::process;
 use std::vec::Vec;
+
 pub type JobId = usize;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -27,11 +29,12 @@ pub enum JobStatus {
 #[derive(Debug, Clone)]
 pub enum Action {
     Execute(ast::SimpleCommand),
-    Pipe(JobId, JobId),
-    SkipIf(ast::SimpleCommand),
-    SkipIfNot(ast::SimpleCommand),
+    Pipe(Vec<JobId>),
+    SkipIf(JobId),
+    SkipIfNot(JobId),
+    Bail(i32),
     Goto(isize),
-    WaitFor(JobId),
+    WaitFor(Vec<JobId>),
     Launch(JobId),
 }
 
@@ -102,10 +105,12 @@ pub fn spawn_raw(
     match unistd::fork().context(ErrorKind::ForkFailed)? {
         unistd::ForkResult::Child => {
             match exec(cmd, fd_actions, variables) {
-                Ok(_) => (),
-                Err(e) => println!("[rush] before exec: {}", e),
+                Ok(_) => unreachable!(),
+                Err(e) => {
+                    println!("[rush] failed to start \"{:?}\": {}", cmd.arguments, e);
+                    process::exit(1);
+                }
             };
-            unreachable!()
         }
         unistd::ForkResult::Parent { child } => Ok(child),
     }
@@ -142,9 +147,8 @@ impl ExecutionEnvironment {
 
         cargs.push(CString::new(first).context(ErrorKind::IllegalNullByte)?);
         for x in iter {
-            cargs.push(
-                CString::new(x.compile(&mut self.vars)?).context(ErrorKind::IllegalNullByte)?,
-            );
+            cargs
+                .push(CString::new(x.compile(&mut self.vars)?).context(ErrorKind::IllegalNullByte)?);
         }
         Ok(RawCommand {
             executable: CString::new(exe.to_string_lossy().to_string())
@@ -192,14 +196,41 @@ impl ExecutionEnvironment {
 
     pub fn launch_job(&mut self, jid: JobId) -> Result<()> {
         let action = match self.job_mut(jid) {
-            Ok(v) => match v.queue.pop_back() {
+            Ok(v) => match v.queue.pop_front() {
                 Some(v) => v,
-                None => return Err(ErrorKind::FailedToRunJob(jid, v.status).into()),
+                None => {
+                    v.status = JobStatus::Finished(0);
+                    return Ok(());
+                }
             },
             Err(e) => return Err(e),
         };
 
         match action {
+            Action::SkipIf(condition) => {
+                self.wait_for(&[condition]);
+                let status = self.job(condition)?.status.clone();
+                match status {
+                    JobStatus::Finished(c) => if c == 0 {
+                        self.job_mut(jid)?.queue.pop_front();
+                    },
+                    _ => (),
+                };
+            }
+            Action::SkipIfNot(condition) => {
+                self.wait_for(&[condition]);
+                let status = self.job(condition)?.status.clone();
+                match status {
+                    JobStatus::Finished(c) => if c != 0 {
+                        self.job_mut(jid)?.queue.pop_front();
+                    },
+                    _ => (),
+                };
+            }
+            Action::Bail(c) => {
+                self.job_mut(jid)?.status = JobStatus::Finished(c);
+                self.job_mut(jid)?.queue.clear();
+            }
             Action::Execute(c) => {
                 let process = {
                     let command = self.make_raw_command(&c)?;
@@ -215,30 +246,71 @@ impl ExecutionEnvironment {
 
                 self.running_jobs.insert(process, jid);
             }
-            Action::WaitFor(jib) => {
-                self.wait_for(jid)?;
+            Action::WaitFor(child_jib) => {
+                self.wait_for(&child_jib)?;
             }
-            Action::Launch(jib) => {
-                self.launch_job(jib)?;
+            Action::Launch(child_jib) => {
+                self.launch_job(child_jib)?;
             }
-            Action::Pipe(from_jid, to_jid) => {
-                let (stdin, stdout) = unistd::pipe().context(ErrorKind::PipelineCreationFailed)?;
-                {
-                    let from = self.job_mut(from_jid)?;
-                    from.fd_actions.push(FdAction::Move(stdout, 1));
-                    from.fd_actions.push(FdAction::Close(stdin))
-                }
-                {
-                    let to = self.job_mut(to_jid)?;
-                    to.fd_actions.push(FdAction::Move(stdin, 0));
-                    to.fd_actions.push(FdAction::Close(stdout));
+            Action::Pipe(mut jids) => {
+                let count = jids.len();
+                let mut pipes = Vec::new();
+                for _ in 0..(count - 1) {
+                    pipes.push(unistd::pipe().context(ErrorKind::PipelineCreationFailed)?);
                 }
 
-                self.launch_job(from_jid)?;
-                self.launch_job(to_jid)?;
+                let mut pipe = 0;
+                {
+                    let stdout = pipes[0].1;
+                    let j = self.job_mut(jids[0])?;
+                    j.fd_actions.push(FdAction::Move(stdout, 1));
+                    for (close_stdin, close_stdout) in pipes.iter() {
+                        if *close_stdout != stdout {
+                            j.fd_actions.push(FdAction::Close(*close_stdout));
+                        }
+                        j.fd_actions.push(FdAction::Close(*close_stdin));
+                    }
+                    pipe += 1;
+                }
 
-                unistd::close(stdout).context(ErrorKind::FailedToClosePipeFile(stdout))?;
-                unistd::close(stdin).context(ErrorKind::FailedToClosePipeFile(stdin))?;
+                for jid in 1..(count - 1) {
+                    let stdin = pipes[pipe - 1].0;
+                    let stdout = pipes[pipe].1;
+
+                    let j = self.job_mut(jids[jid])?;
+                    j.fd_actions.push(FdAction::Move(stdout, 1));
+                    j.fd_actions.push(FdAction::Move(stdin, 0));
+
+                    for (close_stdin, close_stdout) in pipes.iter() {
+                        if *close_stdout != stdout {
+                            j.fd_actions.push(FdAction::Close(*close_stdout));
+                        }
+                        if *close_stdin != stdin {
+                            j.fd_actions.push(FdAction::Close(*close_stdin));
+                        }
+                    }
+
+                    pipe += 1;
+                }
+                {
+                    let stdin = pipes[count - 2].0;
+                    let j = self.job_mut(jids[count - 1])?;
+                    j.fd_actions.push(FdAction::Move(stdin, 0));
+                    for (close_stdin, close_stdout) in pipes.iter() {
+                        if *close_stdin != stdin {
+                            j.fd_actions.push(FdAction::Close(*close_stdin));
+                        }
+                        j.fd_actions.push(FdAction::Close(*close_stdout));
+                    }
+                }
+                for jid in jids {
+                    self.launch_job(jid);
+                }
+
+                for pipe in pipes {
+                    unistd::close(pipe.0).context(ErrorKind::FailedToClosePipeFile(pipe.0))?;
+                    unistd::close(pipe.1).context(ErrorKind::FailedToClosePipeFile(pipe.1))?;
+                }
             }
 
             _ => unimplemented!(),
@@ -260,14 +332,7 @@ impl ExecutionEnvironment {
         }
     }
 
-    pub fn wait_for(&mut self, jid: JobId) -> Result<i32> {
-        match self.job(jid)?.status {
-            JobStatus::Finished(e) => return Ok(e),
-            JobStatus::Sleeping => self.launch_job(jid)?,
-            // TODO handle stopped
-            _ => (),
-        };
-
+    pub fn wait_for(&mut self, jobs: &[JobId]) -> Result<()> {
         // it doesn't matter what the handler is doing, but there has to be one for SIGCHLD
         if !traps::is_trapped(signal::Signal::SIGCHLD) {
             traps::trap(signal::Signal::SIGCHLD, traps::Action::NoOp)
@@ -275,32 +340,48 @@ impl ExecutionEnvironment {
         }
 
         let mut sigs = signal::SigSet::empty();
-        let mut ret = None;
         sigs.add(signal::Signal::SIGCHLD);
         loop {
-            sigs.wait().context(ErrorKind::WaitFailed)?;
+            let mut all_finished = true;
+            for &jid in jobs {
+                loop {
+                    match self.job(jid)?.status {
+                        JobStatus::Finished(e) => break,
+                        JobStatus::Sleeping => if self.job(jid)?.queue.is_empty() {
+                            self.job_mut(jid)?.status = JobStatus::Finished(0);
+                        } else {
+                            self.launch_job(jid)?;
+                        },
+                        // TODO handle stopped
+                        _ => {
+                            all_finished = false;
+                            break;
+                        }
+                    };
+                }
+            }
+            if all_finished {
+                return Ok(());
+            }
+            sigs.wait().context(ErrorKind::SigWaitFailed)?;
 
             loop {
                 match wait::wait().context(ErrorKind::WaitFailed)? {
                     wait::WaitStatus::StillAlive => break,
                     wait::WaitStatus::Exited(pid, exit_code) => match self.cleanup(pid)? {
                         Some(finished_jid) => {
-                            self.job_mut(finished_jid)?.status = JobStatus::Finished(exit_code);
-
-                            if finished_jid == jid {
-                                ret = Some(exit_code);
+                            for &jid in jobs {
+                                self.job_mut(finished_jid)?.status = JobStatus::Finished(exit_code);
                             }
+                            break;
                         }
                         None => (), // Not one of our processes
                     },
                     _ => unimplemented!(),
                 }
-
-                if let Some(exit_code) = ret {
-                    return Ok(exit_code);
-                }
             }
         }
+        Ok(())
     }
 
     fn add_command_to_job(&mut self, cmd: ast::Command, job: JobId) -> Result<()> {
@@ -316,13 +397,56 @@ impl ExecutionEnvironment {
             }
 
             lang::ast::Command::Pipeline(p) => {
-                let from = self.fork(job)?;
-                let to = self.fork(job)?;
-                self.add_command_to_job(p.from.clone(), from)?;
-                self.add_command_to_job(p.to.clone(), to)?;
-                self.job_mut(job)?.queue.push_back(Action::Pipe(from, to));
-                self.job_mut(job)?.queue.push_back(Action::WaitFor(from));
-                self.job_mut(job)?.queue.push_back(Action::WaitFor(to));
+                let mut pipe = p;
+                let from = self.make_job(pipe.from.clone())?;
+                self.add_command_to_job(pipe.to.clone(), from)?;
+                let mut list = vec![from];
+
+                loop {
+                    match pipe.from {
+                        ast::Command::Pipeline(child_pipe) => {
+                            let from = self.make_job(child_pipe.to.clone())?;
+                            list.push(from);
+                            pipe = child_pipe;
+                        }
+                        _ => {
+                            let to = self.make_job(pipe.from.clone())?;
+                            list.push(to);
+                            self.job_mut(job)?
+                                .queue
+                                .push_back(Action::Pipe(list.iter().rev().map(|x| *x).collect()));
+                            self.job_mut(job)?.queue.push_back(Action::WaitFor(list));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            lang::ast::Command::ConditionalPair(c) => {
+                let mut cond = c;
+                let mut left = self.make_job(cond.left.clone())?;
+
+                loop {
+                    match cond.operator {
+                        ast::ConditionOperator::OrIf => {
+                            self.job_mut(job)?.queue.push_back(Action::SkipIfNot(left));
+                        }
+                        ast::ConditionOperator::AndIf => {
+                            self.job_mut(job)?.queue.push_back(Action::SkipIf(left));
+                        }
+                    }
+                    self.job_mut(job)?.queue.push_back(Action::Bail(1));
+                    self.add_command_to_job(cond.right.clone(), job)?;
+                    match cond.left {
+                        ast::Command::ConditionalPair(child_cond) => {
+                            left = self.make_job(child_cond.left.clone())?;
+                            cond = child_cond;
+                        }
+                        _ => {
+                            break;
+                        }
+                    }
+                }
             }
 
             lang::ast::Command::FileRedirect(r) => {
@@ -366,6 +490,10 @@ impl ExecutionEnvironment {
 
     pub fn run<T: Into<ast::Command>>(&mut self, cmd: T) -> Result<i32> {
         let jid = self.spawn(cmd.into())?;
-        self.wait_for(jid)
+        self.wait_for(&[jid])?;
+        match self.job(jid)?.status {
+            JobStatus::Finished(exit_code) => Ok(exit_code),
+            _ => unimplemented!(),
+        }
     }
 }

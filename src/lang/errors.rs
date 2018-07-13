@@ -53,6 +53,9 @@ pub enum ErrorKind {
         display = "failed to close a pipe file descriptor in the parent process (action: {:?})", _0
     )]
     FailedToClosePipeFile(RawFd),
+
+    #[fail(display = "failed to wait for signal")]
+    SigWaitFailed,
 }
 
 impl Error {
