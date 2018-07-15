@@ -173,17 +173,17 @@ mod test {
 
         assert_eq!(
             parse(&fake_terminal[..]).unwrap_err().kind(),
-            &ErrorKind::NotATermInfoFile
+            &ErrorKind::TerminfoInvalid,
         );
 
         assert_eq!(
             parse(&incomplete_terminal[..]).unwrap_err().kind(),
-            &ErrorKind::TooManyFieldsAtBool
+            &ErrorKind::TerminfoMissingBoolFields
         );
 
         assert_eq!(
             parse(&incomplete_terminal2[..]).unwrap_err().kind(),
-            &ErrorKind::FailedToFindEndOfNames
+            &ErrorKind::TerminfoUnterminatedNames
         );
     }
 
