@@ -1,5 +1,9 @@
+#[macro_use]
 pub mod ansi;
 mod error;
+pub mod terminfo;
+pub mod xterm;
+
 pub use self::error::*;
 use failure::ResultExt;
 use nix::sys::termios;
@@ -148,5 +152,6 @@ fn init_raw_mode(fd: RawFd) -> Result<termios::Termios> {
     raw_termios.control_chars[termios::SpecialCharacterIndices::VMIN as usize] = 0;
     termios::tcsetattr(0, termios::SetArg::TCSAFLUSH, &raw_termios)
         .context(ErrorKind::InitRawModeFailed)?;
+
     Ok(original_termios)
 }

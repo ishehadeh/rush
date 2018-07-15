@@ -13,8 +13,25 @@ pub mod shell;
 pub mod term;
 
 use std::env::args;
+use std::fs;
+use std::io;
+use std::io::Read;
+use std::io::Write;
 use std::process::exit;
+use term::terminfo;
+
 fn main() {
+    if !terminfo::found_terminfo() {
+        term::ansi::effect(term::ansi::Effect::Foreground(3));
+        term::ansi::effect(term::ansi::Effect::Bold);
+        print!("warning: ");
+        term::ansi::effect(term::ansi::Effect::Foreground(15));
+        print!("failed to find terminal information, using built-in defaults.");
+        term::ansi::effect(term::ansi::Effect::DefaultForeground);
+        term::ansi::effect(term::ansi::Effect::UnsetBoldAndFaint);
+        println!();
+    }
+
     let mut shell = shell::Shell::new();
     let mut environ = lang::ExecutionEnvironment::new();
 

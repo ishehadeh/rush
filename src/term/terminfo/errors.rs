@@ -1,28 +1,9 @@
 use failure;
-use lang::exec;
 use nom;
-use std::os::unix::io::RawFd;
-use std::{fmt, result};
-pub type Result<T> = result::Result<T, Error>;
-#[derive(Debug)]
-pub struct Error {
-    inner: failure::Context<ErrorKind>,
-}
-
-#[derive(Eq, PartialEq, Debug, Fail)]
+use std::fmt;
+use std::result;
+#[derive(Clone, Debug, Eq, PartialEq, Fail)]
 pub enum ErrorKind {
-    #[fail(display = "failed to put the terminal in raw mode")]
-    InitRawModeFailed,
-
-    #[fail(display = "failed to take terminal out of raw mode")]
-    ExitRawModeFailed,
-
-    #[fail(display = "failed to get the next character")]
-    GetCharFailed,
-
-    #[fail(display = "failed to read the next keystroke")]
-    ReadKeyFailed,
-
     #[fail(display = "The file is not a valid terminfo file")]
     TerminfoInvalid,
 
@@ -44,11 +25,16 @@ pub enum ErrorKind {
     #[fail(display = "terminfo file is incomplete, expecting at least {:?} more bytes.", _0)]
     TerminfoIncomplete(nom::Needed),
 
-    #[fail(display = "An unexpected error occured! The Nom parser failed with error {:?}", _0)]
+    #[fail(display = "Nom parser failed with error {:?}", _0)]
     TerminfoBadFile(nom::ErrorKind<u32>),
 
     #[fail(display = "Failed to read terminfo data")]
     IoError,
+}
+
+#[derive(Debug)]
+pub struct Error {
+    inner: failure::Context<ErrorKind>,
 }
 
 impl Error {
@@ -56,6 +42,8 @@ impl Error {
         self.inner.get_context()
     }
 }
+
+pub type Result<T> = result::Result<T, Error>;
 
 impl failure::Fail for Error {
     fn cause(&self) -> Option<&failure::Fail> {
@@ -85,15 +73,15 @@ impl From<nom::ErrorKind> for ErrorKind {
     fn from(kind: nom::ErrorKind) -> ErrorKind {
         match kind {
             nom::ErrorKind::Custom(code) => match code {
-                1 => ErrorKind::TerminfoInvalid,
-                2 => ErrorKind::TerminfoUnterminatedNames,
-                3 => ErrorKind::TerminfoMissingBoolFields,
-                4 => ErrorKind::TerminfoMissingNumberFields,
-                5 => ErrorKind::TerminfoMissingStringFields,
-                6 => ErrorKind::TerminfoMissingStringTableEntries,
-                _ => ErrorKind::TerminfoBadFile(nom::ErrorKind::Custom(code)),
+                1 => ErrorKind::NotATermInfoFile,
+                2 => ErrorKind::FailedToFindEndOfNames,
+                3 => ErrorKind::TooManyFieldsAtBool,
+                4 => ErrorKind::TooManyFieldsAtNumber,
+                5 => ErrorKind::TooManyFieldsAtString,
+                6 => ErrorKind::EmptyStringTable,
+                _ => ErrorKind::NomErr(nom::ErrorKind::Custom(code)),
             },
-            _ => ErrorKind::TerminfoBadFile(kind),
+            _ => ErrorKind::NomErr(kind),
         }
     }
 }

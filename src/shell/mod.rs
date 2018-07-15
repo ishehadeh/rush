@@ -1,10 +1,10 @@
 use failure;
 use lang;
+use lang::parser;
 use std::ffi::OsString;
 use std::io;
 use std::io::Write;
 use term;
-
 pub struct Shell {
     command_buffer: String,
     history: Vec<String>,
@@ -44,7 +44,7 @@ impl Shell {
                 _ => (),
             }
 
-            let buffer = match self.readline() {
+            let buffer = match self.readline(environ) {
                 Ok(v) => v,
                 Err(e) => {
                     println!();
@@ -69,7 +69,7 @@ impl Shell {
         }
     }
 
-    pub fn readline(&mut self) -> term::Result<String> {
+    pub fn readline(&mut self, environ: &mut lang::ExecutionEnvironment) -> term::Result<String> {
         io::stdout().flush();
         self.command_buffer.clear();
 
@@ -133,7 +133,21 @@ impl Shell {
                 },
                 term::Key::Invalid(_) => print!("\u{FFFD}"),
             };
-            print!("{}", self.command_buffer);
+            let toks = parser::split_words(&self.command_buffer);
+            if toks.len() > 0 {
+                let name = environ.compile_word(&toks[0]).unwrap();
+                let namelen = name.len();
+                if environ.find_executable(name).is_err() {
+                    term::xterm::kitty::set_underline(term::xterm::kitty::Underline::Curly);
+                    term::xterm::kitty::set_underline_color(1);
+                    print!("{}", &self.command_buffer[..namelen]);
+                    term::xterm::kitty::set_underline(term::xterm::kitty::Underline::None);
+                    print!("{}", &self.command_buffer[namelen..]);
+                } else {
+                    print!("{}", self.command_buffer);
+                }
+            }
+
             if xoffset != 0 {
                 term::ansi::cursor_left(xoffset);
             }

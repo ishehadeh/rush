@@ -1,5 +1,6 @@
 use lang::ast::*;
 use lang::word::word;
+use lang::word::Word;
 ///! Nom combinations for parsing RUSH shell scripts
 use nom::types::CompleteStr;
 use std::os::unix::io::RawFd;
@@ -103,6 +104,13 @@ named!(
         (Command::simple(args))
     )
 );
+
+pub fn split_words<T: AsRef<str>>(s: T) -> Vec<Word> {
+    let complete = CompleteStr(s.as_ref());
+    separated_list!(complete, space, word)
+        .unwrap_or((CompleteStr(""), Vec::new()))
+        .1
+}
 
 named!(
     pub redirect_destination<CompleteStr, RedirectDestination>,

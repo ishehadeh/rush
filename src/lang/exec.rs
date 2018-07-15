@@ -3,6 +3,7 @@ use env::traps;
 use failure::ResultExt;
 use lang;
 use lang::ast;
+use lang::word;
 use lang::{Error, ErrorKind, Result};
 use nix::sys::signal;
 use nix::sys::wait;
@@ -479,6 +480,10 @@ impl ExecutionEnvironment {
 
     pub fn variables_mut<'a>(&'a mut self) -> &'a mut env::Variables {
         &mut self.vars
+    }
+
+    pub fn compile_word<'a>(&mut self, w: &word::Word) -> Result<String> {
+        w.compile(&mut self.vars)
     }
 
     pub fn make_job(&mut self, cmd: ast::Command) -> Result<JobId> {
