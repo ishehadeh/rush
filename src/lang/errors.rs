@@ -18,7 +18,8 @@ pub enum ErrorKind {
     SysError,
 
     #[fail(
-        display = "could not find \"{}\" in any paths listed in the $PATH environment variable", _0
+        display = "could not find \"{}\" in any paths listed in the $PATH environment variable",
+        _0
     )]
     MissingExecutable(String),
 
@@ -40,17 +41,12 @@ pub enum ErrorKind {
     #[fail(display = "failed to fork the process")]
     ForkFailed,
 
-    #[fail(display = "invalid job (#{})", _0)]
-    InvalidJobId(exec::JobId),
-
-    #[fail(display = "cannot run job #{} ({:?})", _0, _1)]
-    FailedToRunJob(exec::JobId, exec::JobStatus),
-
-    #[fail(display = "failed to modify the file descriptor table (action: {:?})", _0)]
-    FdTableMutationFailed(exec::FdAction),
+    #[fail(display = "invalid job {:?}", _0)]
+    InvalidJobId(exec::Jid),
 
     #[fail(
-        display = "failed to close a pipe file descriptor in the parent process (action: {:?})", _0
+        display = "failed to close a pipe file descriptor in the parent process (action: {:?})",
+        _0
     )]
     FailedToClosePipeFile(RawFd),
 

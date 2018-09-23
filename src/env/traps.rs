@@ -4,10 +4,10 @@ pub use nix::sys::signal::Signal;
 use std::collections::HashMap;
 use std::os::raw::c_int;
 use std::slice;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 lazy_static! {
-    static ref GLOBAL_TRAPS: Mutex<Traps> = { Mutex::new(Traps::with_capacity(31)) };
+    static ref GLOBAL_TRAPS: RwLock<Traps> = { RwLock::new(Traps::with_capacity(31)) };
 }
 
 pub type LineFn = Box<FnMut() + Send + Sync + 'static>;
@@ -21,7 +21,7 @@ pub enum Action {
 }
 
 pub fn trap(sig: Signal, a: Action) -> nix::Result<()> {
-    let mut mut_traps = GLOBAL_TRAPS.lock().unwrap();
+    let mut mut_traps = GLOBAL_TRAPS.write().unwrap();
     match mut_traps.get_mut(&sig) {
         Some(v) => {
             v.push(a);
@@ -53,7 +53,7 @@ pub fn trap_s<T: AsRef<str>>(sig: T, a: Action) -> nix::Result<()> {
 }
 
 pub fn release(sig: Signal) -> nix::Result<()> {
-    let mut mut_traps = GLOBAL_TRAPS.lock().unwrap();
+    let mut mut_traps = GLOBAL_TRAPS.write().unwrap();
     mut_traps.remove(&sig);
     unsafe {
         signal::sigaction(
@@ -68,11 +68,11 @@ pub fn release(sig: Signal) -> nix::Result<()> {
 }
 
 pub fn is_trapped(sig: Signal) -> bool {
-    return GLOBAL_TRAPS.lock().unwrap().contains_key(&sig);
+    return GLOBAL_TRAPS.read().unwrap().contains_key(&sig);
 }
 
 extern "C" fn __rush_global_signal_handler(sig: c_int) {
-    let mut traps = GLOBAL_TRAPS.lock().unwrap();
+    let mut traps = GLOBAL_TRAPS.write().unwrap();
     match traps.get_mut(&(Signal::from_c_int(sig).unwrap())) {
         Some(actions) => for action in actions {
             match action {
@@ -89,7 +89,8 @@ extern "C" fn __rush_global_signal_handler(sig: c_int) {
 }
 
 pub fn parse_signal<T: AsRef<str>>(s: T) -> Option<Signal> {
-    Some(match s.as_ref()
+    Some(match s
+        .as_ref()
         .to_ascii_uppercase()
         .trim()
         .trim_left_matches("SIG")

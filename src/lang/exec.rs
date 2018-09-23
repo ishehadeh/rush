@@ -1,135 +1,342 @@
-use env;
+use env::functions::Functions;
 use env::traps;
+use env::variables::Variables;
 use failure::ResultExt;
-use lang;
-use lang::ast;
-use lang::word;
+use lang::ast::Command;
+use lang::ast::ConditionOperator;
+use lang::word::Word;
 use lang::{Error, ErrorKind, Result};
+use nix::libc;
 use nix::sys::signal;
-use nix::sys::wait;
+use nix::sys::wait::{wait, WaitStatus};
 use nix::unistd;
-use std::collections::{HashMap, VecDeque};
-use std::env::split_paths;
-use std::ffi::CString;
-use std::ffi::{OsStr, OsString};
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::ffi::{CString, OsStr, OsString};
 use std::os::unix::io::RawFd;
-use std::path;
-use std::process;
-use std::vec::Vec;
+use std::path::PathBuf;
 
-pub type JobId = usize;
+#[derive(Debug, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Jid(u32);
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
+pub struct ExecutionContext {
+    pub cwd: PathBuf,
+    vars: Variables,
+    funcs: Functions,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct ExitStatus {
+    pub pid: unistd::Pid,
+    pub exit_code: i32,
+    pub core_dumped: bool,
+    pub signal: Option<signal::Signal>,
+}
+
 pub enum JobStatus {
     Running,
-    Finished(i32),
-    Stopped(signal::Signal),
-    Sleeping,
+    Complete(ExitStatus),
 }
 
-#[derive(Debug, Clone)]
-pub enum Action {
-    Execute(ast::SimpleCommand),
-    Pipe(Vec<JobId>),
-    SkipIf(JobId),
-    SkipIfNot(JobId),
-    Bail(i32),
-    Goto(isize),
-    WaitFor(Vec<JobId>),
-    Launch(JobId),
+pub struct JobManager {
+    next_jid: u32,
+    running_jobs: BTreeMap<libc::pid_t, Jid>,
+    completed_jobs: BTreeMap<Jid, ExitStatus>,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum FdAction {
-    Dup(RawFd),
-    Dup2(RawFd, RawFd),
-    Move(RawFd, RawFd),
-    Close(RawFd),
+struct ProcOptions<'a> {
+    close_fds: &'a Vec<RawFd>,
+    env: &'a [CString],
+    stdin: Option<RawFd>,
+    stdout: Option<RawFd>,
 }
 
-pub struct RawCommand {
-    executable: CString,
-    arguments: Vec<CString>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Job {
-    id: JobId,
-    status: JobStatus,
-
-    queue: VecDeque<Action>,
-    fd_actions: Vec<FdAction>,
-    files: Vec<RawFd>,
-    variables: Vec<CString>,
-}
-
-#[derive(Debug)]
-pub struct ExecutionEnvironment {
-    vars: env::Variables,
-    running_jobs: HashMap<unistd::Pid, JobId>,
-    queued_jobs: Vec<Job>,
-    pub fail_fast: bool,
-}
-
-fn exec(cmd: &RawCommand, fd_actions: &[FdAction], variables: &[CString]) -> Result<()> {
-    for a in fd_actions {
-        match a {
-            FdAction::Dup(fd) => {
-                unistd::dup(*fd).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
-            }
-            FdAction::Move(from, to) => {
-                unistd::dup2(*from, *to).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
-                unistd::close(*from).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
-            }
-            FdAction::Dup2(source, dest) => {
-                unistd::dup2(*source, *dest).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
-            }
-            FdAction::Close(fd) => {
-                unistd::close(*fd).context(ErrorKind::FdTableMutationFailed(a.clone()))?;
-            }
+impl JobManager {
+    pub fn new() -> JobManager {
+        JobManager {
+            next_jid: 0,
+            running_jobs: BTreeMap::new(),
+            completed_jobs: BTreeMap::new(),
         }
     }
 
-    if variables.len() > 0 {
-        unistd::execve(&cmd.executable, &cmd.arguments, variables)
-    } else {
-        unistd::execv(&cmd.executable, &cmd.arguments)
-    }.context(ErrorKind::ExecFailed)?;
-    Ok(())
-}
+    pub fn run(&mut self, ec: &mut ExecutionContext, command: Command) -> Result<ExitStatus> {
+        let close_fds = Vec::new();
+        let env = Vec::new();
+        let opts = ProcOptions {
+            stdin: None,
+            stdout: None,
+            close_fds: &close_fds,
+            env: &env,
+        };
 
-pub fn spawn_raw(
-    cmd: &RawCommand,
-    fd_actions: &[FdAction],
-    variables: &[CString],
-) -> Result<unistd::Pid> {
-    match unistd::fork().context(ErrorKind::ForkFailed)? {
-        unistd::ForkResult::Child => {
-            match exec(cmd, fd_actions, variables) {
-                Ok(_) => unreachable!(),
-                Err(e) => {
-                    println!("[rush] failed to start \"{:?}\": {}", cmd.arguments, e);
-                    process::exit(1);
+        let jids = self.spawn_procs_from_ast(&opts, ec, &command)?;
+        self.await_all(&jids);
+        Ok(jids
+            .last()
+            .map(|id| self.completed_jobs.get(id).unwrap().clone())
+            .unwrap_or(ExitStatus {
+                exit_code: 0,
+                core_dumped: false,
+                pid: unistd::getpid(),
+                signal: None,
+            }))
+    }
+
+    fn next(&mut self) -> Result<(Jid, ExitStatus)> {
+        let mut status = None;
+        while status.is_none() {
+            match wait().context(ErrorKind::WaitFailed)? {
+                WaitStatus::Exited(pid, code) => {
+                    status = self.running_jobs.get(&pid.into()).map(|jid| {
+                        (
+                            jid.clone(),
+                            ExitStatus {
+                                pid: pid,
+                                exit_code: code,
+                                core_dumped: false,
+                                signal: None,
+                            },
+                        )
+                    });
                 }
-            };
+                WaitStatus::Signaled(pid, sig, core_dump) => {
+                    status = self.running_jobs.get(&pid.into()).map(|jid| {
+                        (
+                            jid.clone(),
+                            ExitStatus {
+                                pid: pid,
+                                exit_code: -1,
+                                core_dumped: core_dump,
+                                signal: Some(sig),
+                            },
+                        )
+                    });
+                }
+                _ => (),
+            }
         }
-        unistd::ForkResult::Parent { child } => Ok(child),
+
+        Ok(status.unwrap())
+    }
+
+    fn add_job(&mut self, pid: unistd::Pid) -> Jid {
+        let jid = Jid(self.next_jid);
+        self.running_jobs.insert(pid.into(), jid);
+        self.next_jid += 1;
+        jid
+    }
+
+    /// Low level function to smooth over fork + execv[e]
+    fn spawn_proc<'a>(
+        &mut self,
+        exe: &CString,
+        args: &[CString],
+        path: &PathBuf,
+        opts: &'a ProcOptions<'a>,
+    ) -> Result<Jid> {
+        match unistd::fork().context(ErrorKind::ExecFailed)? {
+            unistd::ForkResult::Child => {
+                for fd in opts.close_fds {
+                    unistd::close(*fd);
+                }
+
+                if let Some(stdin) = opts.stdin {
+                    unistd::dup2(stdin, 0);
+                }
+
+                if let Some(stdout) = opts.stdout {
+                    unistd::dup2(stdout, 1);
+                }
+
+                unistd::chdir(path);
+                if opts.env.len() == 0 {
+                    unistd::execv(exe, args).unwrap();
+                } else {
+                    let mut exe_env: Vec<CString> = env::vars_os()
+                        .map(|(k, v)| {
+                            let mut kv = OsString::with_capacity(k.len() + 1 + v.len());
+                            kv.push(k.into_string().unwrap());
+                            kv.push("=");
+                            kv.push(v.into_string().unwrap());
+                            CString::new(kv.into_string().unwrap().as_bytes()).unwrap()
+                        }).collect();
+                    exe_env.extend(opts.env.iter().map(|e| e.clone()));
+                    unistd::execve(&exe, args, &exe_env).unwrap();
+                }
+                unreachable!();
+            }
+            unistd::ForkResult::Parent { child } => Ok(self.add_job(child)),
+        }
+    }
+
+    // spawn 0 or more processes based on a shell-language abstract syntax tree in a given execution context
+    fn spawn_procs_from_ast<'a>(
+        &mut self,
+        opts: &'a ProcOptions<'a>,
+        ec: &mut ExecutionContext,
+        command: &Command,
+    ) -> Result<Vec<Jid>> {
+        match command {
+            Command::SimpleCommand(cmd) => {
+                let mut args = Vec::with_capacity(cmd.arguments.len());
+                for w in &cmd.arguments {
+                    for arg in w
+                        .compile(&mut ec.vars)
+                        .context(ErrorKind::ExecFailed)?
+                        .split(|c: char| c == '\n' || c == '\t' || c == ' ')
+                    {
+                        args.push(CString::new(arg.as_bytes()).context(ErrorKind::ExecFailed)?);
+                    }
+                }
+
+                let exe = ec.find_executable(args[0].to_string_lossy().to_string())?;
+                let c_exe = CString::new(exe.to_str().unwrap().as_bytes()).unwrap();
+
+                Ok(vec![self.spawn_proc(&c_exe, &args, &ec.cwd, opts)?])
+            }
+            Command::Pipeline(pipe) => {
+                let (stdin, stdout) = unistd::pipe().context(ErrorKind::PipelineCreationFailed)?;
+                let mut close_from = opts.close_fds.clone();
+                let mut to_from = opts.close_fds.clone();
+
+                close_from.push(stdin);
+                if let Some(pipe_out) = opts.stdout {
+                    close_from.push(pipe_out)
+                }
+                to_from.push(stdout);
+                if let Some(pipe_in) = opts.stdin {
+                    to_from.push(pipe_in)
+                }
+
+                let from_opts = ProcOptions {
+                    close_fds: &close_from,
+                    env: opts.env,
+                    stdin: opts.stdin,
+                    stdout: Some(stdout),
+                };
+
+                let to_opts = ProcOptions {
+                    close_fds: &to_from,
+                    env: opts.env,
+                    stdin: Some(stdin),
+                    stdout: opts.stdout,
+                };
+
+                let mut jids = self.spawn_procs_from_ast(&from_opts, ec, &pipe.from)?;
+                jids.extend(self.spawn_procs_from_ast(&to_opts, ec, &pipe.to)?);
+
+                unistd::close(stdin);
+                unistd::close(stdout);
+
+                Ok(jids)
+            }
+            Command::BraceGroup(group) => {
+                let mut exit_code = 0;
+                let mut subenv = ec.clone();
+                for cmd in &group.commands {
+                    let jids = self.spawn_procs_from_ast(opts, &mut subenv, &cmd)?;
+                    self.await_all(&jids);
+                }
+                Ok(Vec::new())
+            }
+            Command::Group(group) => {
+                let mut exit_code = 0;
+                for cmd in &group.commands {
+                    let jids = self.spawn_procs_from_ast(opts, ec, &cmd)?;
+                    self.await_all(&jids);
+                }
+                Ok(Vec::new())
+            }
+            Command::ConditionalPair(cond) => {
+                let jobs_left = self.spawn_procs_from_ast(opts, ec, &cond.left)?;
+                self.await_all(&jobs_left);
+                let exit_code = jobs_left
+                    .last()
+                    .map(|r| self.completed_jobs.get(r).unwrap().exit_code)
+                    .unwrap_or(0);
+                if (exit_code == 0 && cond.operator == ConditionOperator::AndIf)
+                    || (exit_code != 0 && cond.operator == ConditionOperator::OrIf)
+                {
+                    let jobs_right = self.spawn_procs_from_ast(opts, ec, &cond.right)?;
+                    self.await_all(&jobs_right);
+                    Ok(jobs_right)
+                } else {
+                    Ok(jobs_left)
+                }
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn stat(&mut self, jid: Jid) -> Result<JobStatus> {
+        if let Some(status) = self.completed_jobs.get(&jid) {
+            Ok(JobStatus::Complete(status.clone()))
+        } else {
+            self.running_jobs
+                .iter()
+                .find(|(_, v)| **v == jid)
+                .map_or(Err(ErrorKind::InvalidJobId(jid).into()), |v| {
+                    Ok(JobStatus::Running)
+                })
+        }
+    }
+
+    /// Wait for a specific job to complete
+    pub fn await(&mut self, jid: Jid) -> Result<ExitStatus> {
+        if let Some(exit_status) = self.completed_jobs.get(&jid) {
+            return Ok(exit_status.clone());
+        }
+
+        let mut completed = self.next()?;
+        while completed.0 != jid {
+            self.completed_jobs.insert(completed.0, completed.1);
+            completed = self.next()?;
+        }
+        self.completed_jobs.insert(completed.0, completed.1);
+        Ok(completed.1)
+    }
+
+    /// Wait for several jobs to complete
+    pub fn await_all(&mut self, jids: &[Jid]) -> Result<()> {
+        let mut incomplete: BTreeSet<Jid> = jids
+            .iter()
+            .map(|jid| *jid)
+            .filter(|jid| self.completed_jobs.get(jid).is_none())
+            .collect();
+
+        let mut completed = self.next()?;
+        while incomplete.len() > 0 {
+            self.completed_jobs.insert(completed.0, completed.1);
+            completed = self.next()?;
+            incomplete.remove(&completed.0);
+        }
+        self.completed_jobs.insert(completed.0, completed.1);
+        Ok(())
     }
 }
 
-impl ExecutionEnvironment {
-    pub fn new() -> ExecutionEnvironment {
-        ExecutionEnvironment {
-            vars: env::Variables::from_env(),
-            fail_fast: false,
-            running_jobs: HashMap::new(),
-            queued_jobs: Vec::new(),
+impl ExecutionContext {
+    pub fn new() -> ExecutionContext {
+        ExecutionContext {
+            vars: Variables::from_env(),
+            funcs: Functions::new(),
+            cwd: env::current_dir().unwrap(),
         }
     }
 
-    pub fn find_executable<S: AsRef<OsStr>>(&self, prog: S) -> Result<path::PathBuf> {
+    pub fn variables<'a>(&'a self) -> &'a Variables {
+        &self.vars
+    }
+
+    pub fn variables_mut<'a>(&'a mut self) -> &'a mut Variables {
+        &mut self.vars
+    }
+
+    pub fn find_executable<S: AsRef<OsStr>>(&self, prog: S) -> Result<PathBuf> {
         let prog_ref = prog.as_ref();
-        for path in split_paths(&self.vars.value(&OsString::from("PATH"))) {
+        for path in env::split_paths(&self.vars.value(&OsString::from("PATH"))) {
             let p = path.with_file_name(prog_ref);
             if p.exists() {
                 return Ok(p);
@@ -138,372 +345,5 @@ impl ExecutionEnvironment {
 
         let owned_prog = prog_ref.to_os_string().to_string_lossy().to_string();
         Err(Error::from(ErrorKind::MissingExecutable(owned_prog)))
-    }
-
-    pub fn make_raw_command(&mut self, cmd: &lang::ast::SimpleCommand) -> Result<RawCommand> {
-        let mut iter = cmd.arguments.iter();
-        let first = iter.next().unwrap().compile(&mut self.vars)?;
-        let exe = self.find_executable(&first)?;
-        let mut cargs = Vec::with_capacity(cmd.arguments.len());
-
-        cargs.push(CString::new(first).context(ErrorKind::IllegalNullByte)?);
-        for x in iter {
-            cargs
-                .push(CString::new(x.compile(&mut self.vars)?).context(ErrorKind::IllegalNullByte)?);
-        }
-        Ok(RawCommand {
-            executable: CString::new(exe.to_string_lossy().to_string())
-                .context(ErrorKind::IllegalNullByte)?,
-            arguments: cargs,
-        })
-    }
-
-    pub fn job<'b>(&'b self, jid: JobId) -> Result<&'b Job> {
-        match self.queued_jobs.iter().nth(jid) {
-            Some(v) => Ok(v),
-            None => Err(ErrorKind::InvalidJobId(jid).into()),
-        }
-    }
-
-    pub fn job_mut<'b>(&'b mut self, jid: JobId) -> Result<&'b mut Job> {
-        match self.queued_jobs.iter_mut().nth(jid) {
-            Some(v) => Ok(v),
-            None => Err(ErrorKind::InvalidJobId(jid).into()),
-        }
-    }
-
-    pub fn fork(&mut self, jid: JobId) -> Result<JobId> {
-        let new_jid = self.queued_jobs.len();
-        let mut new_job = self.job(jid)?.clone();
-        new_job.id = new_jid;
-        self.queued_jobs.push(new_job);
-        Ok(new_jid)
-    }
-
-    pub fn schedule(&mut self) -> Result<JobId> {
-        let jid = self.queued_jobs.len();
-
-        self.queued_jobs.push(Job {
-            id: jid,
-            files: Vec::new(),
-            status: JobStatus::Sleeping,
-            queue: VecDeque::new(),
-            fd_actions: Vec::new(),
-            variables: Vec::new(),
-        });
-
-        Ok(jid)
-    }
-
-    pub fn launch_job(&mut self, jid: JobId) -> Result<()> {
-        let action = match self.job_mut(jid) {
-            Ok(v) => match v.queue.pop_front() {
-                Some(v) => v,
-                None => {
-                    v.status = JobStatus::Finished(0);
-                    return Ok(());
-                }
-            },
-            Err(e) => return Err(e),
-        };
-
-        match action {
-            Action::SkipIf(condition) => {
-                self.wait_for(&[condition]);
-                let status = self.job(condition)?.status.clone();
-                match status {
-                    JobStatus::Finished(c) => if c == 0 {
-                        self.job_mut(jid)?.queue.pop_front();
-                    },
-                    _ => (),
-                };
-            }
-            Action::SkipIfNot(condition) => {
-                self.wait_for(&[condition]);
-                let status = self.job(condition)?.status.clone();
-                match status {
-                    JobStatus::Finished(c) => if c != 0 {
-                        self.job_mut(jid)?.queue.pop_front();
-                    },
-                    _ => (),
-                };
-            }
-            Action::Bail(c) => {
-                self.job_mut(jid)?.status = JobStatus::Finished(c);
-                self.job_mut(jid)?.queue.clear();
-            }
-            Action::Execute(c) => {
-                let process = {
-                    let command = self.make_raw_command(&c)?;
-                    let job = self.job(jid)?;
-                    if job.status != JobStatus::Sleeping {
-                        return Err(ErrorKind::FailedToRunJob(jid, job.status).into());
-                    }
-
-                    let p = spawn_raw(&command, &job.fd_actions, &job.variables)?;
-                    p
-                };
-                self.job_mut(jid)?.status = JobStatus::Running;
-
-                self.running_jobs.insert(process, jid);
-            }
-            Action::WaitFor(child_jib) => {
-                self.wait_for(&child_jib)?;
-            }
-            Action::Launch(child_jib) => {
-                self.launch_job(child_jib)?;
-            }
-            Action::Pipe(mut jids) => {
-                let count = jids.len();
-                let mut pipes = Vec::new();
-                for _ in 0..(count - 1) {
-                    pipes.push(unistd::pipe().context(ErrorKind::PipelineCreationFailed)?);
-                }
-                let my_actions = self.job(jid)?.fd_actions.clone();
-
-                let mut pipe = 0;
-                {
-                    let stdout = pipes[0].1;
-                    let j = self.job_mut(jids[0])?;
-                    j.fd_actions.extend(my_actions.iter());
-                    j.fd_actions.push(FdAction::Move(stdout, 1));
-                    for (close_stdin, close_stdout) in pipes.iter() {
-                        if *close_stdout != stdout {
-                            j.fd_actions.push(FdAction::Close(*close_stdout));
-                        }
-                        j.fd_actions.push(FdAction::Close(*close_stdin));
-                    }
-                    pipe += 1;
-                }
-
-                for jid_idx in 1..(count - 1) {
-                    let stdin = pipes[pipe - 1].0;
-                    let stdout = pipes[pipe].1;
-
-                    let j = self.job_mut(jids[jid_idx])?;
-                    j.fd_actions.extend(my_actions.iter());
-                    j.fd_actions.push(FdAction::Move(stdout, 1));
-                    j.fd_actions.push(FdAction::Move(stdin, 0));
-
-                    for (close_stdin, close_stdout) in pipes.iter() {
-                        if *close_stdout != stdout {
-                            j.fd_actions.push(FdAction::Close(*close_stdout));
-                        }
-                        if *close_stdin != stdin {
-                            j.fd_actions.push(FdAction::Close(*close_stdin));
-                        }
-                    }
-
-                    pipe += 1;
-                }
-                {
-                    let stdin = pipes[count - 2].0;
-                    let j = self.job_mut(jids[count - 1])?;
-                    j.fd_actions.extend(my_actions.iter());
-                    j.fd_actions.push(FdAction::Move(stdin, 0));
-
-                    for (close_stdin, close_stdout) in pipes.iter() {
-                        if *close_stdin != stdin {
-                            j.fd_actions.push(FdAction::Close(*close_stdin));
-                        }
-                        j.fd_actions.push(FdAction::Close(*close_stdout));
-                    }
-                }
-                for jid in jids {
-                    self.launch_job(jid);
-                }
-
-                for pipe in pipes {
-                    unistd::close(pipe.0).context(ErrorKind::FailedToClosePipeFile(pipe.0))?;
-                    unistd::close(pipe.1).context(ErrorKind::FailedToClosePipeFile(pipe.1))?;
-                }
-            }
-
-            _ => unimplemented!(),
-        }
-
-        Ok(())
-    }
-
-    pub fn cleanup(&mut self, pid: unistd::Pid) -> Result<Option<JobId>> {
-        match self.running_jobs.get(&pid) {
-            Some(jid) => match self.queued_jobs.iter_mut().nth(*jid) {
-                Some(v) => {
-                    v.status = JobStatus::Sleeping;
-                    Ok(Some(*jid))
-                }
-                None => Err(ErrorKind::InvalidJobId(*jid).into()),
-            },
-            None => Ok(None),
-        }
-    }
-
-    pub fn wait_for(&mut self, jobs: &[JobId]) -> Result<()> {
-        // it doesn't matter what the handler is doing, but there has to be one for SIGCHLD
-        if !traps::is_trapped(signal::Signal::SIGCHLD) {
-            traps::trap(signal::Signal::SIGCHLD, traps::Action::NoOp)
-                .context(ErrorKind::WaitFailed)?;
-        }
-
-        let mut sigs = signal::SigSet::empty();
-        sigs.add(signal::Signal::SIGCHLD);
-        loop {
-            let mut all_finished = true;
-            for &jid in jobs {
-                loop {
-                    match self.job(jid)?.status {
-                        JobStatus::Finished(e) => break,
-                        JobStatus::Sleeping => if self.job(jid)?.queue.is_empty() {
-                            self.job_mut(jid)?.status = JobStatus::Finished(0);
-                        } else {
-                            self.launch_job(jid)?;
-                        },
-                        // TODO handle stopped
-                        _ => {
-                            all_finished = false;
-                            break;
-                        }
-                    };
-                }
-            }
-            if all_finished {
-                return Ok(());
-            }
-            sigs.wait().context(ErrorKind::SigWaitFailed)?;
-
-            loop {
-                match wait::wait().context(ErrorKind::WaitFailed)? {
-                    wait::WaitStatus::StillAlive => break,
-                    wait::WaitStatus::Exited(pid, exit_code) => match self.cleanup(pid)? {
-                        Some(finished_jid) => {
-                            for &jid in jobs {
-                                self.job_mut(finished_jid)?.status = JobStatus::Finished(exit_code);
-                            }
-                            break;
-                        }
-                        None => (), // Not one of our processes
-                    },
-                    _ => unimplemented!(),
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn add_command_to_job(&mut self, cmd: ast::Command, job: JobId) -> Result<()> {
-        match cmd {
-            lang::ast::Command::SimpleCommand(sc) => {
-                self.job_mut(job)?.queue.push_back(Action::Execute(sc));
-            }
-
-            lang::ast::Command::Group(g) => {
-                for c in g.commands {
-                    self.add_command_to_job(c, job)?;
-                }
-            }
-
-            lang::ast::Command::Pipeline(p) => {
-                let mut pipe = p;
-                let to = self.make_job(pipe.to.clone())?;
-                let mut list = vec![to];
-
-                loop {
-                    match pipe.from {
-                        ast::Command::Pipeline(child_pipe) => {
-                            let to = self.make_job(child_pipe.to.clone())?;
-                            list.push(to);
-                            pipe = child_pipe;
-                        }
-                        _ => {
-                            let from = self.make_job(pipe.from.clone())?;
-                            list.push(from);
-                            self.job_mut(job)?
-                                .queue
-                                .push_back(Action::Pipe(list.iter().rev().map(|x| *x).collect()));
-                            self.job_mut(job)?.queue.push_back(Action::WaitFor(list));
-                            break;
-                        }
-                    }
-                }
-            }
-
-            lang::ast::Command::ConditionalPair(c) => {
-                let mut cond = c;
-                let mut left = self.make_job(cond.left.clone())?;
-
-                loop {
-                    match cond.operator {
-                        ast::ConditionOperator::OrIf => {
-                            self.job_mut(job)?.queue.push_back(Action::SkipIfNot(left));
-                        }
-                        ast::ConditionOperator::AndIf => {
-                            self.job_mut(job)?.queue.push_back(Action::SkipIf(left));
-                        }
-                    }
-                    self.job_mut(job)?.queue.push_back(Action::Bail(1));
-                    self.add_command_to_job(cond.right.clone(), job)?;
-                    match cond.left {
-                        ast::Command::ConditionalPair(child_cond) => {
-                            left = self.make_job(child_cond.left.clone())?;
-                            cond = child_cond;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            lang::ast::Command::FileRedirect(r) => {
-                self.add_command_to_job(r.left.clone(), job)?;
-                for redir in r.redirects {
-                    match redir.operation {
-                        ast::IoOperation::OutputDupFd => {
-                            let fd2 = redir.file.compile(&mut self.vars)?;
-                            self.job_mut(job)?.fd_actions.insert(
-                                0,
-                                FdAction::Dup2(fd2.parse().unwrap(), redir.fd.unwrap_or(1)),
-                            ); // TODO error handling
-                        }
-                        _ => unimplemented!(),
-                    }
-                }
-            }
-            _ => unimplemented!(),
-        };
-        Ok(())
-    }
-
-    pub fn variables<'a>(&'a self) -> &'a env::Variables {
-        &self.vars
-    }
-
-    pub fn variables_mut<'a>(&'a mut self) -> &'a mut env::Variables {
-        &mut self.vars
-    }
-
-    pub fn compile_word<'a>(&mut self, w: &word::Word) -> Result<String> {
-        w.compile(&mut self.vars)
-    }
-
-    pub fn make_job(&mut self, cmd: ast::Command) -> Result<JobId> {
-        let job = self.schedule()?;
-        self.add_command_to_job(cmd, job)?;
-        Ok(job)
-    }
-
-    pub fn spawn<T: Into<ast::Command>>(&mut self, cmd: T) -> Result<JobId> {
-        let job = self.make_job(cmd.into())?;
-        self.launch_job(job)?;
-        Ok(job)
-    }
-
-    pub fn run<T: Into<ast::Command>>(&mut self, cmd: T) -> Result<i32> {
-        let jid = self.spawn(cmd.into())?;
-        self.wait_for(&[jid])?;
-        match self.job(jid)?.status {
-            JobStatus::Finished(exit_code) => Ok(exit_code),
-            _ => unimplemented!(),
-        }
     }
 }
