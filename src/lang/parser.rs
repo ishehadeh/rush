@@ -1,6 +1,7 @@
 use lang::ast::*;
 use lang::word::word;
 use lang::word::Word;
+use nom;
 ///! Nom combinations for parsing RUSH shell scripts
 use nom::types::CompleteStr;
 use std::os::unix::io::RawFd;
@@ -130,12 +131,25 @@ named!(
 named!(
     pub redirect<CompleteStr, Command>,
     do_parse!(
-        command  : sp!(alt!(group | simple_command)) >>
+        command  : sp!(alt!(function | group | simple_command)) >>
         redirect : opt!(many1!(sp!(redirect_destination))) >>
         (match redirect {
             Some(v) => Command::redirect(command, v),
             None => command,
         })
+    )
+);
+
+named!(
+    pub function<CompleteStr, Command>,
+    do_parse!(
+        _kw : sp!(tag!("function")) >>
+        name : sp!(word) >>
+        body : sp!(group) >>
+        (Command::Function(Box::new(Function {
+            name: name,
+            body: body,
+        })))
     )
 );
 
@@ -177,7 +191,11 @@ named!(
 );
 
 named!(
+    pub comment<CompleteStr, Command>,
+    map!(preceded!(tag!("#"), take_until!("\n")), |s| Command::Comment(s.0.to_string()))
+);
+
+named!(
     pub commandline<CompleteStr, Command>,
     map!(sp!(separated_list!(separator, list)), |v| Command::group(v))
-
 );

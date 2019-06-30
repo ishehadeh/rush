@@ -3,7 +3,7 @@ use std::collections::btree_map;
 use std::collections::BTreeMap;
 
 pub type Name = String;
-pub type Value = ast::Function;
+pub type Value = ast::Command;
 pub type Iter<'b> = btree_map::Iter<'b, Name, Value>;
 pub type IterMut<'b> = btree_map::IterMut<'b, Name, Value>;
 pub type IntoIter = btree_map::IntoIter<Name, Value>;
@@ -51,6 +51,10 @@ impl Functions {
             btree_map::Entry::Occupied(v) => Entry::Occupied(OccupiedEntry { entry: v }),
             btree_map::Entry::Vacant(v) => Entry::Vacant(VacantEntry { entry: v }),
         }
+    }
+
+    pub fn insert(&mut self, key: Name, value: Value) -> Option<Value> {
+        self.map.insert(key, value)
     }
 
     pub fn iter<'b>(&'b self) -> Iter<'b> {

@@ -182,19 +182,25 @@ impl JobManager {
             Command::SimpleCommand(cmd) => {
                 let mut args = Vec::with_capacity(cmd.arguments.len());
                 for w in &cmd.arguments {
-                    for arg in w
-                        .compile(&mut ec.vars)
-                        .context(ErrorKind::ExecFailed)?
-                        .split(|c: char| c == '\n' || c == '\t' || c == ' ')
-                    {
-                        args.push(CString::new(arg.as_bytes()).context(ErrorKind::ExecFailed)?);
-                    }
+                    let arg = w.compile(&mut ec.vars).context(ErrorKind::ExecFailed)?;
+                    args.push(CString::new(arg.as_bytes()).context(ErrorKind::ExecFailed)?);
                 }
 
-                let exe = ec.find_executable(args[0].to_string_lossy().to_string())?;
-                let c_exe = CString::new(exe.to_str().unwrap().as_bytes()).unwrap();
+                // TODO check args count
+                let argv0 = args[0].to_string_lossy().to_string();
 
-                Ok(vec![self.spawn_proc(&c_exe, &args, &ec.cwd, opts)?])
+                if let Some(body) = ec.functions().value(&argv0) {
+                    self.spawn_procs_from_ast(opts, ec, &body)
+                } else {
+                    let exe = if !argv0.starts_with("./") {
+                        ec.find_executable(argv0)?
+                    } else {
+                        PathBuf::from(argv0)
+                    };
+
+                    let c_exe = CString::new(exe.to_str().unwrap().as_bytes()).unwrap();
+                    Ok(vec![self.spawn_proc(&c_exe, &args, &ec.cwd, opts)?])
+                }
             }
             Command::Pipeline(pipe) => {
                 let (stdin, stdout) = unistd::pipe().context(ErrorKind::PipelineCreationFailed)?;
@@ -266,6 +272,12 @@ impl JobManager {
                     Ok(jobs_left)
                 }
             }
+            Command::Function(func) => {
+                let str_name = func.name.compile(ec.variables_mut())?;
+                ec.functions_mut().insert(str_name, func.body.clone());
+                Ok(vec![])
+            }
+            Command::Comment(_s) => Ok(vec![]),
             _ => unimplemented!(),
         }
     }
@@ -332,6 +344,14 @@ impl ExecutionContext {
 
     pub fn variables_mut<'a>(&'a mut self) -> &'a mut Variables {
         &mut self.vars
+    }
+
+    pub fn functions<'a>(&'a self) -> &'a Functions {
+        &self.funcs
+    }
+
+    pub fn functions_mut<'a>(&'a mut self) -> &'a mut Functions {
+        &mut self.funcs
     }
 
     pub fn find_executable<S: AsRef<OsStr>>(&self, prog: S) -> Result<PathBuf> {

@@ -18,6 +18,8 @@ pub enum Command {
     While(Box<While>),
     For(Box<For>),
     Until(Box<Until>),
+    Function(Box<Function>),
+    Comment(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

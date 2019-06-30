@@ -122,7 +122,7 @@ named!(
                 many0!(single_quoted_token),
             char!('\'')
         ) => { |c| Token::Quoted(Word::from(c)) }
-        | take_while1!(|c : char| c != '&'  && c != '"' && c != '{' && c != '}' && c != '\'' &&  c != '|' && c != '\\' && c != '$' && !nom::is_space(c as u8)) => {|x : CompleteStr| Token::Slice(x.0.to_string())}
+        | take_while1!(|c : char| c != '&'  && c != '"' && c != '{' && c != '}' && c != '\'' &&  c != '|' && c != ';' && c != '\n' && c != '\\' && c != '$' && !nom::is_space(c as u8)) => {|x : CompleteStr| Token::Slice(x.0.to_string())}
     )
 );
 

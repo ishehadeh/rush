@@ -2,6 +2,7 @@ use failure;
 use lang;
 use lang::ast::Command;
 use lang::parser;
+use lang::word::Word;
 use nixterm;
 use nixterm::events::Key;
 use std::ffi::OsString;
@@ -39,14 +40,19 @@ impl Shell {
         while !self.exit_requested() {
             let prefix_command = ec
                 .variables()
-                .value(&OsString::from("RUSH_PREFIX"))
+                .value(&OsString::from("RUSH_PROMPT"))
                 .to_string_lossy()
                 .to_string();
 
             match jm.run(
                 ec,
                 if prefix_command.is_empty() {
-                    Command::from("printf 'rush-%s$ ' \"$RUSH_VERSION\"".to_owned())
+                    Command::simple(
+                        ["printf", "'rush-%s$ '", "$RUSH_VERSION"]
+                            .iter()
+                            .map(|w| Word::parse(w))
+                            .collect(),
+                    )
                 } else {
                     Command::from(prefix_command)
                 },
@@ -80,25 +86,6 @@ impl Shell {
         }
     }
 
-    fn shift_cursor(&self, x: isize) {
-        if x == 0 {
-            return;
-        }
-
-        self.term.print(
-            self.term
-                .info
-                .exec(if x < 0 {
-                    nixterm::terminfo::ParmLeftCursor
-                } else {
-                    nixterm::terminfo::ParmRightCursor
-                }).unwrap()
-                .arg(x.abs())
-                .string()
-                .unwrap(),
-        );
-    }
-
     pub fn readline(&mut self, environ: &mut lang::ExecutionContext) -> nixterm::Result<String> {
         self.command_buffer.clear();
 
@@ -108,7 +95,11 @@ impl Shell {
 
         for k in self.term.read_keys() {
             let backtrack = self.command_buffer.len() as isize;
-            self.shift_cursor(xoffset - backtrack);
+            self.term
+                .writer()
+                .shift_cursor(xoffset - backtrack, 0)
+                .done();
+
             match k? {
                 Key::Control(c) => {
                     if c == 'D' && self.command_buffer.len() == 0 {
@@ -162,14 +153,14 @@ impl Shell {
                 Key::Right if xoffset > 0 => xoffset -= 1,
                 _ => (),
             };
-            self.term.print(&self.command_buffer)?;
 
             self.term
-                .print(self.term.info.string(nixterm::terminfo::ClrEol).unwrap());
-
-            if xoffset != 0 {
-                self.shift_cursor(-xoffset);
-            }
+                .writer()
+                .print(&self.command_buffer)
+                .print(self.term.info.string(nixterm::terminfo::ClrEol).unwrap())
+                .shift_cursor(-xoffset, 0)
+                .done()
+                .unwrap();
         }
 
         self.term.update(self.old_settings.clone());
