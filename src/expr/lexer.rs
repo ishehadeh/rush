@@ -29,12 +29,12 @@ named!(binary_digit<CompleteStr, CompleteStr>,
 
 named!(
     pub exp_part<CompleteStr, CompleteStr>,
-        recognize!(
-            tuple!(
-                alt!(tag!("e") | tag!("E")),
-                opt!(alt!(tag!("+") | tag!("-"))),
-                digit
-            )
+    recognize!(
+        tuple!(
+            alt!(tag!("e") | tag!("E")),
+            opt!(alt!(tag!("+") | tag!("-"))),
+            digit
+        )
     )
 );
 
@@ -222,5 +222,158 @@ impl<'a> Iterator for TokenStream<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        super::types::{Operator, Token},
+        TokenStream,
+    };
+
+    fn tokens(source: &str) -> Vec<Token> {
+        TokenStream::new(source)
+            .map(|result| {
+                result
+                    .unwrap_or_else(|err| panic!("failed to parse tokenize '{}': {}", source, err))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn identifiers() {
+        // identifiers
+        assert_eq!(
+            tokens("hello world1 hii_2 _3 __super_private1"),
+            vec![
+                Token::Variable("hello"),
+                Token::Variable("world1"),
+                Token::Variable("hii_2"),
+                Token::Variable("_3"),
+                Token::Variable("__super_private1")
+            ]
+        );
+    }
+
+    #[test]
+    fn numbers() {
+        // numbers
+        assert_eq!(
+            tokens("5312 32.3 0x23 0b1001001 0o77 5e-2 .3145 .1e+100 1.5e1"),
+            vec![
+                Token::Number(5312),
+                Token::FloatingNumber(32.3),
+                Token::Number(0x23),
+                Token::Number(0b1001001),
+                Token::Number(0o77),
+                Token::FloatingNumber(5e-2),
+                Token::FloatingNumber(0.3145),
+                Token::FloatingNumber(0.1e+100),
+                Token::FloatingNumber(1.5e1),
+            ]
+        );
+    }
+
+    #[test]
+    fn punctuation() {
+        assert_eq!(
+            tokens(",? (:)"),
+            vec![
+                Token::Comma,
+                Token::QuestionMark,
+                Token::LeftParen,
+                Token::Colon,
+                Token::RightParen,
+            ]
+        );
+    }
+
+    #[test]
+    fn operators_arithmetic() {
+        assert_eq!(
+            tokens("+ - * / %"),
+            vec![
+                Token::Operator(Operator::Add),
+                Token::Operator(Operator::Subtract),
+                Token::Operator(Operator::Multiply),
+                Token::Operator(Operator::Divide),
+                Token::Operator(Operator::Modulo),
+            ]
+        );
+    }
+
+    #[test]
+    fn operators_comparison() {
+        assert_eq!(
+            tokens("< <= > >= == !="),
+            vec![
+                Token::Operator(Operator::LessThan),
+                Token::Operator(Operator::LessThanOrEqual),
+                Token::Operator(Operator::GreaterThan),
+                Token::Operator(Operator::GreaterThanOrEqual),
+                Token::Operator(Operator::Equal),
+                Token::Operator(Operator::NotEqual),
+            ]
+        );
+    }
+
+    #[test]
+    fn operators_bitwise() {
+        assert_eq!(
+            tokens(" << >> & ^ |"),
+            vec![
+                Token::Operator(Operator::LeftShift),
+                Token::Operator(Operator::RightShift),
+                Token::Operator(Operator::BitAnd),
+                Token::Operator(Operator::BitExclusiveOr),
+                Token::Operator(Operator::BitOr),
+            ]
+        );
+    }
+
+    #[test]
+    fn operators_boolean() {
+        // boolean operators
+        assert_eq!(
+            tokens("&& ||"),
+            vec![
+                Token::Operator(Operator::And),
+                Token::Operator(Operator::Or),
+            ]
+        );
+    }
+
+    #[test]
+    fn operators_assignment() {
+        assert_eq!(
+            tokens("+= -= *= /= %= <<= >>= &= ^= |= ="),
+            vec![
+                Token::Operator(Operator::AssignAdd),
+                Token::Operator(Operator::AssignSubtract),
+                Token::Operator(Operator::AssignMultiply),
+                Token::Operator(Operator::AssignDivide),
+                Token::Operator(Operator::AssignModulo),
+                Token::Operator(Operator::AssignLeftShift),
+                Token::Operator(Operator::AssignRightShift),
+                Token::Operator(Operator::AssignBitAnd),
+                Token::Operator(Operator::AssignBitExclusiveOr),
+                Token::Operator(Operator::AssignBitOr),
+                Token::Operator(Operator::Assign),
+            ]
+        );
+    }
+
+    #[test]
+    fn operators_non_infix() {
+        assert_eq!(
+            tokens("++ -- ~ !"),
+            vec![
+                Token::Operator(Operator::Increment),
+                Token::Operator(Operator::Decrement),
+                Token::Operator(Operator::Negate),
+                Token::Operator(Operator::Not),
+            ]
+        );
     }
 }
