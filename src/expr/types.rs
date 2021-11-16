@@ -37,7 +37,7 @@ pub struct Condition {
     pub on_false: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
     Operator(Operator),
     Variable(&'a str),
