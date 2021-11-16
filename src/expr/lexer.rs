@@ -28,21 +28,23 @@ named!(binary_digit<CompleteStr, CompleteStr>,
 );
 
 named!(
-    pub decimal<CompleteStr, f64>,
-    flat_map!(
+    pub exp_part<CompleteStr, CompleteStr>,
         recognize!(
             tuple!(
-                alt!(
-                    delimited!(digit, tag!("."), opt!(digit))
-                    | delimited!(opt!(digit), tag!("."), digit)
-                    | digit
-                ),
-                opt!(tuple!(
-                    alt!(tag!("e") | tag!("E")),
-                    opt!(alt!(tag!("+") | tag!("-"))),
-                    digit
-                ))
+                alt!(tag!("e") | tag!("E")),
+                opt!(alt!(tag!("+") | tag!("-"))),
+                digit
             )
+    )
+);
+
+named!(
+    pub decimal<CompleteStr, f64>,
+    flat_map!(
+        alt!(
+            recognize!(tuple!(delimited!(digit, tag!("."), opt!(digit)), opt!(exp_part)))
+            | recognize!(tuple!(delimited!(opt!(digit), tag!("."), digit), opt!(exp_part)))
+            | recognize!(tuple!(digit, exp_part)) // exponent is required to make this a float if its otherwise just an integer
         ),
         parse_to!(f64)
     )
