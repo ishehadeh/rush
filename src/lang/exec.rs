@@ -358,7 +358,7 @@ impl ExecutionContext {
     pub fn find_executable<S: AsRef<OsStr>>(&self, prog: S) -> Result<PathBuf> {
         let prog_ref = prog.as_ref();
         for path in env::split_paths(&self.vars.value(&OsString::from("PATH"))) {
-            let p = path.with_file_name(prog_ref);
+            let p = path.join(prog_ref);
             if p.exists() {
                 return Ok(p);
             }
