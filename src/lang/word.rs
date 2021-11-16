@@ -1,7 +1,7 @@
-use env;
-use expr;
+use crate::env;
+use crate::expr;
+use crate::lang::{ErrorKind, Result};
 use failure::ResultExt;
-use lang::{ErrorKind, Result};
 use nom;
 use nom::types::CompleteStr;
 

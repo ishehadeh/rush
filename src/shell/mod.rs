@@ -1,5 +1,5 @@
+use crate::lang;
 use failure;
-use lang;
 use lang::ast::Command;
 use lang::parser;
 use lang::word::Word;

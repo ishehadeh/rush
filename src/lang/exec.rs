@@ -1,11 +1,11 @@
-use env::functions::Functions;
-use env::traps;
-use env::variables::Variables;
+use crate::env::functions::Functions;
+use crate::env::traps;
+use crate::env::variables::Variables;
+use crate::lang::ast::Command;
+use crate::lang::ast::ConditionOperator;
+use crate::lang::word::Word;
+use crate::lang::{Error, ErrorKind, Result};
 use failure::ResultExt;
-use lang::ast::Command;
-use lang::ast::ConditionOperator;
-use lang::word::Word;
-use lang::{Error, ErrorKind, Result};
 use nix::libc;
 use nix::sys::signal;
 use nix::sys::wait::{wait, WaitStatus};
@@ -296,7 +296,7 @@ impl JobManager {
     }
 
     /// Wait for a specific job to complete
-    pub fn await(&mut self, jid: Jid) -> Result<ExitStatus> {
+    pub fn r#await(&mut self, jid: Jid) -> Result<ExitStatus> {
         if let Some(exit_status) = self.completed_jobs.get(&jid) {
             return Ok(exit_status.clone());
         }

@@ -1,4 +1,4 @@
-use lang::ast;
+use crate::lang::ast;
 use std::collections::btree_map;
 use std::collections::BTreeMap;
 

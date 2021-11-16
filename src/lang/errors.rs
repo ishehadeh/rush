@@ -1,5 +1,5 @@
+use crate::lang::exec;
 use failure;
-use lang::exec;
 use std::os::unix::io::RawFd;
 use std::{fmt, result};
 
@@ -61,7 +61,7 @@ impl Error {
 }
 
 impl failure::Fail for Error {
-    fn cause(&self) -> Option<&failure::Fail> {
+    fn cause(&self) -> Option<&dyn failure::Fail> {
         self.inner.cause()
     }
 

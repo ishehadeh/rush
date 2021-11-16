@@ -9,7 +9,7 @@ pub use self::errors::*;
 pub use self::parser::parse;
 pub use self::types::Expr;
 use self::types::Operator;
-use env::Variables;
+use crate::env::Variables;
 use nom::types::CompleteStr;
 use std::ffi::OsString;
 use std::str::FromStr;

@@ -1,4 +1,4 @@
-use lang::word::Word;
+use crate::lang::word::Word;
 use std::os::unix::io::RawFd;
 use std::vec::Vec;
 
@@ -141,7 +141,7 @@ where
     T: AsRef<str>,
 {
     fn from(s: T) -> Command {
-        use lang::parser::commandline;
+        use crate::lang::parser::commandline;
         use nom::types::CompleteStr;
         commandline(CompleteStr(s.as_ref())).unwrap().1
     }

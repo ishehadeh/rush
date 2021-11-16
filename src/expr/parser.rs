@@ -1,6 +1,6 @@
-use expr::errors::*;
-use expr::lexer::TokenStream;
-use expr::types::*;
+use crate::expr::errors::*;
+use crate::expr::lexer::TokenStream;
+use crate::expr::types::*;
 
 pub struct Parser<'a> {
     tokens: TokenStream<'a>,
@@ -83,7 +83,7 @@ impl<'a> Parser<'a> {
     }
 
     fn must_parse_precedence(&mut self, p: Precedence) -> Result<Expr> {
-        match try!(self.parse_precedence(p)) {
+        match self.parse_precedence(p)? {
             Some(v) => Ok(v),
             None => Err(Error::from(ErrorKind::UnexpectedEof).with(Context {
                 token: String::from(" "),

@@ -1,5 +1,5 @@
-use expr::errors::*;
-use expr::types::*;
+use crate::expr::errors::*;
+use crate::expr::types::*;
 
 use nom;
 use nom::types::CompleteStr;
@@ -185,7 +185,7 @@ impl<'a> Iterator for TokenStream<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let tok = opt!(
             CompleteStr(self.sliced),
-            ws!(alt!( 
+            ws!(alt!(
                 decimal    => { |v| Token::FloatingNumber(v) }
                 | integer    => { |v| Token::Number(v)         }
                 | variable   => { |v| Token::Variable(v)       }

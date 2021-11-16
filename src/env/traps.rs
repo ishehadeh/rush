@@ -10,7 +10,7 @@ lazy_static! {
     static ref GLOBAL_TRAPS: RwLock<Traps> = { RwLock::new(Traps::with_capacity(31)) };
 }
 
-pub type LineFn = Box<FnMut() + Send + Sync + 'static>;
+pub type LineFn = Box<dyn FnMut() + Send + Sync + 'static>;
 pub type Traps = HashMap<Signal, Vec<Action>>;
 pub type TrapIter<'a> = slice::Iter<'a, Action>;
 

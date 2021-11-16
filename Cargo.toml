@@ -2,6 +2,7 @@
 name = "rush"
 version = "0.1.0"
 authors = ["Ian Shehadeh <IanShehadeh2020@gmail.com>"]
+edition = "2021"
 
 [dependencies]
 nom = "4.1.1"

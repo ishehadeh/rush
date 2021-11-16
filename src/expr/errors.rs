@@ -60,7 +60,7 @@ impl Error {
 }
 
 impl failure::Fail for Error {
-    fn cause(&self) -> Option<&failure::Fail> {
+    fn cause(&self) -> Option<&dyn failure::Fail> {
         self.inner.cause()
     }
 

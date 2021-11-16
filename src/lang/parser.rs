@@ -1,6 +1,6 @@
-use lang::ast::*;
-use lang::word::word;
-use lang::word::Word;
+use crate::lang::ast::*;
+use crate::lang::word::word;
+use crate::lang::word::Word;
 use nom;
 ///! Nom combinations for parsing RUSH shell scripts
 use nom::types::CompleteStr;
