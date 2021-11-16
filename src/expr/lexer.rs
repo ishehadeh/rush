@@ -140,9 +140,12 @@ named!(
         | tag!("-=")  => { |_| Operator::AssignSubtract }
         | tag!("*=")  => { |_| Operator::AssignMultiply }
         | tag!("/=")  => { |_| Operator::AssignDivide }
+        | tag!("%=")  => { |_| Operator::AssignModulo }
         | tag!("&=")  => { |_| Operator::AssignBitAnd }
         | tag!("|=")  => { |_| Operator::AssignBitOr }
         | tag!("^=")  => { |_| Operator::AssignBitExclusiveOr }
+        | tag!("<=")  => { |_| Operator::LessThanOrEqual }
+        | tag!(">=")  => { |_| Operator::GreaterThanOrEqual }
         | tag!("=")   => { |_| Operator::Assign }
         | tag!("<")   => { |_| Operator::LessThan }
         | tag!(">")   => { |_| Operator::GreaterThan }
