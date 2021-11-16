@@ -64,7 +64,7 @@ named!(
     )
 );
 
-named!{
+named! {
     pub double_quoted_token<CompleteStr, Token>,
     alt!(
         preceded!(char!('\\'),

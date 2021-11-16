@@ -141,14 +141,18 @@ impl Shell {
                             .insert((backtrack - xoffset) as usize, c);
                     }
                 }
-                Key::Up => if hist_index != 0 {
-                    hist_index -= 1;
-                    self.command_buffer = self.history[hist_index].clone();
-                },
-                Key::Down => if self.history.len() > hist_index + 1 {
-                    hist_index += 1;
-                    self.command_buffer = self.history[hist_index].clone();
-                },
+                Key::Up => {
+                    if hist_index != 0 {
+                        hist_index -= 1;
+                        self.command_buffer = self.history[hist_index].clone();
+                    }
+                }
+                Key::Down => {
+                    if self.history.len() > hist_index + 1 {
+                        hist_index += 1;
+                        self.command_buffer = self.history[hist_index].clone();
+                    }
+                }
                 Key::Left if xoffset < backtrack => xoffset += 1,
                 Key::Right if xoffset > 0 => xoffset -= 1,
                 _ => (),

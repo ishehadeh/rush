@@ -206,13 +206,16 @@ impl<'a> Iterator for TokenStream<'a> {
                 self.sliced = slice.0;
                 Some(Ok(t))
             }
-            None => if self.sliced.len() == 0 {
-                None
-            } else {
-                Some(Err(ErrorKind::InvalidCharacter(
-                    self.sliced.chars().next().unwrap(),
-                ).into()))
-            },
+            None => {
+                if self.sliced.len() == 0 {
+                    None
+                } else {
+                    Some(Err(ErrorKind::InvalidCharacter(
+                        self.sliced.chars().next().unwrap(),
+                    )
+                    .into()))
+                }
+            }
         }
     }
 }

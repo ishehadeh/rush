@@ -161,7 +161,8 @@ impl JobManager {
                             kv.push("=");
                             kv.push(v.into_string().unwrap());
                             CString::new(kv.into_string().unwrap().as_bytes()).unwrap()
-                        }).collect();
+                        })
+                        .collect();
                     exe_env.extend(opts.env.iter().map(|e| e.clone()));
                     unistd::execve(&exe, args, &exe_env).unwrap();
                 }

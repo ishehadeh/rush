@@ -32,8 +32,9 @@ impl Expr {
                 let name: OsString = n.to_string().into();
                 let new_value = f(lexer::float(CompleteStr(
                     vars.value(&name).to_str().unwrap_or("0"),
-                )).map(|(_, y)| y as f64)
-                    .unwrap_or(0.0_f64));
+                ))
+                .map(|(_, y)| y as f64)
+                .unwrap_or(0.0_f64));
 
                 vars.define(&name, new_value.clone().to_string());
                 return Expr::Number(new_value);
@@ -48,8 +49,9 @@ impl Expr {
                 let name = n.to_string().into();
                 let new_value = f(lexer::float(CompleteStr(
                     vars.value(&name).to_str().unwrap_or("0"),
-                )).map(|(_, y)| y as f64)
-                    .unwrap_or(0.0_f64));
+                ))
+                .map(|(_, y)| y as f64)
+                .unwrap_or(0.0_f64));
 
                 vars.define(n.clone().to_string(), new_value.clone().to_string());
                 Expr::Number(new_value)
@@ -69,8 +71,9 @@ impl Expr {
                     let name = n.to_string().into();
                     let new_value = f(lexer::float(CompleteStr(
                         vars.value(&name).to_str().unwrap_or("0"),
-                    )).map(|(_, y)| y as f64)
-                        .unwrap_or(0.0_f64));
+                    ))
+                    .map(|(_, y)| y as f64)
+                    .unwrap_or(0.0_f64));
                     vars.define(name, new_value.to_string());
                     return Expr::Number(new_value);
                 }
@@ -114,11 +117,13 @@ impl Expr {
             Expr::Prefix(pre) => match pre.operator {
                 Operator::Increment => pre.right.modify_variable(vars, |v| v + 1.0),
                 Operator::Decrement => pre.right.modify_variable(vars, |v| v - 1.0),
-                Operator::Not => if pre.right.as_boolean() {
-                    Expr::Number(0.0_f64)
-                } else {
-                    Expr::Number(1.0_f64)
-                },
+                Operator::Not => {
+                    if pre.right.as_boolean() {
+                        Expr::Number(0.0_f64)
+                    } else {
+                        Expr::Number(1.0_f64)
+                    }
+                }
                 Operator::Negate => pre.right.modify_number(vars, |x| !(x as isize) as f64),
                 Operator::Add => pre.right,
                 Operator::Subtract => pre.right.modify_number(vars, |x| -x),
@@ -147,48 +152,63 @@ impl Expr {
                     Operator::Modulo => inf.left.modify_number(vars, |v| v % right),
                     Operator::LeftShift => inf.left.modify_number_i(vars, |v| v << right as isize),
                     Operator::RightShift => inf.left.modify_number_i(vars, |v| v >> right as isize),
-                    Operator::LessThan => inf.left
+                    Operator::LessThan => inf
+                        .left
                         .modify_number(vars, |v| (v < right) as isize as f64),
-                    Operator::LessThanOrEqual => inf.left
+                    Operator::LessThanOrEqual => inf
+                        .left
                         .modify_number(vars, |v| (v <= right) as isize as f64),
-                    Operator::GreaterThan => inf.left
+                    Operator::GreaterThan => inf
+                        .left
                         .modify_number(vars, |v| (v > right) as isize as f64),
-                    Operator::GreaterThanOrEqual => inf.left
+                    Operator::GreaterThanOrEqual => inf
+                        .left
                         .modify_number(vars, |v| (v >= right) as isize as f64),
-                    Operator::Equal => inf.left
+                    Operator::Equal => inf
+                        .left
                         .modify_number(vars, |v| (v == right) as isize as f64),
-                    Operator::NotEqual => inf.left
+                    Operator::NotEqual => inf
+                        .left
                         .modify_number(vars, |v| (v != right) as isize as f64),
                     Operator::BitAnd => inf.left.modify_number_i(vars, |v| v & right as isize),
                     Operator::BitExclusiveOr => {
                         inf.left.modify_number_i(vars, |v| v ^ right as isize)
                     }
                     Operator::BitOr => inf.left.modify_number_i(vars, |v| v | right as isize),
-                    Operator::And => if inf.left.as_boolean() && inf.right.as_boolean() {
-                        Expr::Number(1.0_f64)
-                    } else {
-                        Expr::Number(0.0_f64)
-                    },
-                    Operator::Or => if inf.left.as_boolean() && inf.right.as_boolean() {
-                        Expr::Number(1.0_f64)
-                    } else {
-                        Expr::Number(0.0_f64)
-                    },
+                    Operator::And => {
+                        if inf.left.as_boolean() && inf.right.as_boolean() {
+                            Expr::Number(1.0_f64)
+                        } else {
+                            Expr::Number(0.0_f64)
+                        }
+                    }
+                    Operator::Or => {
+                        if inf.left.as_boolean() && inf.right.as_boolean() {
+                            Expr::Number(1.0_f64)
+                        } else {
+                            Expr::Number(0.0_f64)
+                        }
+                    }
                     Operator::Assign => inf.left.assign_variable(vars, |_| right),
                     Operator::AssignAdd => inf.left.assign_variable(vars, |v| v + right),
                     Operator::AssignSubtract => inf.left.assign_variable(vars, |v| v - right),
                     Operator::AssignMultiply => inf.left.assign_variable(vars, |v| v * right),
                     Operator::AssignDivide => inf.left.assign_variable(vars, |v| v / right),
                     Operator::AssignModulo => inf.left.assign_variable(vars, |v| v % right),
-                    Operator::AssignBitAnd => inf.left
+                    Operator::AssignBitAnd => inf
+                        .left
                         .assign_variable(vars, |v| (v as isize & right as isize) as f64),
-                    Operator::AssignBitExclusiveOr => inf.left
+                    Operator::AssignBitExclusiveOr => inf
+                        .left
                         .assign_variable(vars, |v| (v as isize ^ right as isize) as f64),
-                    Operator::AssignBitOr => inf.left
+                    Operator::AssignBitOr => inf
+                        .left
                         .assign_variable(vars, |v| (v as isize | right as isize) as f64),
-                    Operator::AssignLeftShift => inf.left
+                    Operator::AssignLeftShift => inf
+                        .left
                         .assign_variable(vars, |v| ((v as isize) << right as isize) as f64),
-                    Operator::AssignRightShift => inf.left
+                    Operator::AssignRightShift => inf
+                        .left
                         .assign_variable(vars, |v| (v as isize >> right as isize) as f64),
                     _ => unreachable!(),
                 }

@@ -102,7 +102,9 @@ impl<'a> Parser<'a> {
                 Token::Variable(n) => Expr::Variable(n.to_string()),
                 Token::Operator(op) => {
                     if !op.is_prefix() {
-                        return Err(Error::from(ErrorKind::InvalidPrefixOperator).with(self.context(v)));
+                        return Err(
+                            Error::from(ErrorKind::InvalidPrefixOperator).with(self.context(v))
+                        );
                     }
 
                     Expr::Prefix(Box::new(Prefix {
@@ -121,7 +123,10 @@ impl<'a> Parser<'a> {
                                     .with(self.context(v)))
                             }
                         },
-                        None => return Err(Error::from(ErrorKind::ExpectingRightParentheses).with(self.context(v))),
+                        None => {
+                            return Err(Error::from(ErrorKind::ExpectingRightParentheses)
+                                .with(self.context(v)))
+                        }
                     }
                 }
                 _ => return Err(Error::from(ErrorKind::InvalidToken).with(self.context(v))),
@@ -131,13 +136,15 @@ impl<'a> Parser<'a> {
 
         match self.peek().clone() {
             Some(v) => match v {
-                Token::Operator(o) => if o.is_suffix() {
-                    left = Expr::Suffix(Box::new(Suffix {
-                        left: left,
-                        operator: o,
-                    }));
-                    self.next()?;
-                },
+                Token::Operator(o) => {
+                    if o.is_suffix() {
+                        left = Expr::Suffix(Box::new(Suffix {
+                            left: left,
+                            operator: o,
+                        }));
+                        self.next()?;
+                    }
+                }
                 Token::RightParen => return Ok(Some(left)),
                 _ => (),
             },
