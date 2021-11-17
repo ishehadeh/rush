@@ -178,14 +178,18 @@ impl Expr {
                     }
                     Operator::BitOr => inf.left.modify_number_i(vars, |v| v | right as isize),
                     Operator::And => {
-                        if inf.left.as_boolean() && inf.right.as_boolean() {
+                        if inf.left.evaluate(vars).as_boolean()
+                            && inf.right.evaluate(vars).as_boolean()
+                        {
                             Expr::Number(1.0_f64)
                         } else {
                             Expr::Number(0.0_f64)
                         }
                     }
                     Operator::Or => {
-                        if inf.left.as_boolean() && inf.right.as_boolean() {
+                        if inf.left.evaluate(vars).as_boolean()
+                            || inf.right.evaluate(vars).as_boolean()
+                        {
                             Expr::Number(1.0_f64)
                         } else {
                             Expr::Number(0.0_f64)
