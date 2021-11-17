@@ -166,10 +166,10 @@ impl<'a> Parser<'a> {
                         let on_true = self.must_parse_precedence(token_precedence.clone())?;
                         match self.next()? {
                             Some(Token::Colon) => (),
-                                _ => {
-                                    return Err(Error::from(ErrorKind::ExpectingTernaryElse)
-                                        .with(self.context(v)))
-                                }
+                            _ => {
+                                return Err(Error::from(ErrorKind::ExpectingTernaryElse)
+                                    .with(self.context(v)))
+                            }
                         };
 
                         let on_false = self.must_parse_precedence(token_precedence)?;
@@ -227,15 +227,27 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod test {
     use crate::expr::{
+        errors::ErrorKind,
         lexer::TokenStream,
         parser::Parser,
         types::{Condition, Expr, Infix, Operator, Prefix, Suffix},
+        Error,
     };
 
     fn parse(source: &str) -> Expr {
         Parser::new(TokenStream::new(source))
             .parse()
             .unwrap_or_else(|err| panic!("failed to parse expression '{}': {}", source, err))
+    }
+
+    fn parse_error(source: &str) -> Error {
+        match Parser::new(TokenStream::new(source)).parse() {
+            Ok(v) => panic!(
+                "expected to fail parsing '{}', instead succeeded with '{}':\nast = {:#?}",
+                source, v, v
+            ),
+            Err(e) => e,
+        }
     }
 
     macro_rules! expr {
@@ -352,6 +364,35 @@ mod test {
         assert_eq!(
             parse("++(1-- * (3))"),
             expr!(pre Increment (Multiply (suf Decrement 1.0) 3.0))
+        );
+    }
+
+    #[test]
+    fn errors() {
+        assert_eq!(
+            parse_error("2 * (1 + 2").kind(),
+            &ErrorKind::ExpectingRightParentheses
+        );
+        assert_eq!(parse_error("2 * 1 +").kind(), &ErrorKind::UnexpectedEof);
+        assert_eq!(
+            parse_error("2 ? 1").kind(),
+            &ErrorKind::ExpectingTernaryElse
+        );
+        assert_eq!(parse_error("*hi").kind(), &ErrorKind::InvalidPrefixOperator);
+        assert_eq!(
+            parse_error("hello ++ world").kind(),
+            &ErrorKind::InvalidInfixOperator
+        );
+        assert_eq!(parse_error("1/").kind(), &ErrorKind::UnexpectedEof);
+        assert_eq!(
+            parse_error("1 three").kind(),
+            &ErrorKind::InvalidInfixOperator
+        );
+        assert_eq!(parse_error(",").kind(), &ErrorKind::InvalidToken);
+        assert_eq!(parse_error("`").kind(), &ErrorKind::InvalidCharacter('`'));
+        assert_eq!(
+            parse_error("(2 + (1)(").kind(),
+            &ErrorKind::ExpectingRightParentheses
         );
     }
 }
