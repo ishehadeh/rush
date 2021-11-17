@@ -182,35 +182,9 @@ impl<'a> Parser<'a> {
                     }
                     Token::Comma | Token::Colon | Token::RightParen => break,
                     Token::LeftParen => {
-                        let next = self.next()?;
-                        let new_left = Expr::Infix(Box::new(Infix {
-                            left: left,
-                            operator: match next {
-                                Some(v) => match v {
-                                    Token::Operator(o) => o,
-                                    _ => {
-                                        return Err(Error::from(ErrorKind::InvalidInfixOperator)
-                                            .with(self.context(v)))
-                                    }
-                                },
-                                None => return Ok(None),
-                            },
-                            right: self.must_parse_precedence(Precedence::Separator)?,
-                        }));
-
-                        match self.next()? {
-                            Some(v) => match v {
-                                Token::RightParen => new_left,
-                                _ => {
-                                    return Err(Error::from(ErrorKind::ExpectingRightParentheses)
-                                        .with(self.context(v)))
-                                }
-                            },
-                            None => {
-                                return Err(Error::from(ErrorKind::ExpectingRightParentheses)
-                                    .with(self.context(v)))
-                            }
-                        }
+                        return Err(
+                            Error::from(ErrorKind::InvalidInfixOperator).with(self.context(v))
+                        )
                     }
                     _ => unreachable!(),
                 },
@@ -394,5 +368,6 @@ mod test {
             parse_error("(2 + (1)(").kind(),
             &ErrorKind::ExpectingRightParentheses
         );
+        assert_eq!(parse_error("a(5)").kind(), &ErrorKind::InvalidInfixOperator);
     }
 }
