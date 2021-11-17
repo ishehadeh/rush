@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,7 +86,7 @@ pub enum Operator {
     Not,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     Minimum,
     Prefix,
@@ -179,26 +178,6 @@ impl Operator {
         Precedence::from_operator(self)
     }
 }
-
-impl PartialOrd for Precedence {
-    fn partial_cmp(&self, other: &Precedence) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Precedence {
-    fn cmp(&self, other: &Precedence) -> Ordering {
-        (self.clone() as isize).cmp(&(other.clone() as isize))
-    }
-}
-
-impl PartialEq for Precedence {
-    fn eq(&self, other: &Precedence) -> bool {
-        self == other
-    }
-}
-
-impl Eq for Precedence {}
 
 impl<'a> fmt::Display for Token<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
