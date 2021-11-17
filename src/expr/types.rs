@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
     Variable(String),
@@ -11,26 +11,26 @@ pub enum Expr {
     Condition(Box<Condition>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Infix {
     pub left: Expr,
     pub operator: Operator,
     pub right: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Prefix {
     pub operator: Operator,
     pub right: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Suffix {
     pub operator: Operator,
     pub left: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Condition {
     pub condition: Expr,
     pub on_true: Expr,

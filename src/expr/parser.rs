@@ -226,3 +226,135 @@ impl<'a> Parser<'a> {
         Ok(Some(left))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::expr::{
+        lexer::TokenStream,
+        parser::Parser,
+        types::{Condition, Expr, Infix, Operator, Prefix, Suffix},
+    };
+
+    fn parse(source: &str) -> Expr {
+        Parser::new(TokenStream::new(source))
+            .parse()
+            .unwrap_or_else(|err| panic!("failed to parse expression '{}': {}", source, err))
+    }
+
+    macro_rules! expr {
+        // erase extra parentheses
+        ( ( $($x:tt)+ ) ) => { expr!($($x)*) };
+
+        ($cond:tt ? $succ:tt : $fail:tt) => {
+            Expr::Condition(Box::new(Condition {
+                condition: expr!($cond),
+                on_true: expr!($succ),
+                on_false: expr!($fail),
+            }))
+        };
+
+        (pre $op:ident $rhs:tt) => {
+            Expr::Prefix(Box::new(Prefix {
+                operator: Operator::$op,
+                right: expr!($rhs),
+            }))
+        };
+        (suf $op:ident $lhs:tt) => {
+            Expr::Suffix(Box::new(Suffix {
+                operator: Operator::$op,
+                left: expr!($lhs),
+            }))
+        };
+        ($op:ident $lhs:tt $rhs:tt) => {
+            Expr::Infix(Box::new(Infix {
+                left: expr!($lhs),
+                operator: Operator::$op,
+                right: expr!($rhs),
+            }))
+        };
+        ($ident:ident) => {
+            Expr::Variable(std::stringify!($ident).to_string())
+        };
+        ($num:tt) => {
+            Expr::Number($num)
+        };
+    }
+
+    #[test]
+    fn simple_infix() {
+        assert_eq!(parse("1 + 1"), expr!(Add 1.0 1.0));
+        assert_eq!(parse("1 / hello"), expr!(Divide 1.0 hello));
+    }
+
+    #[test]
+    fn simple_prefix() {
+        assert_eq!(parse("~11e5"), expr!(pre Negate 11.0e5));
+        assert_eq!(parse("!yes"), expr!(pre Not yes));
+        assert_eq!(parse("++zero"), expr!(pre Increment zero));
+        assert_eq!(parse("--1"), expr!(pre Decrement 1.0));
+    }
+
+    #[test]
+    fn simple_suffix() {
+        assert_eq!(parse("0++"), expr!(suf Increment 0.0));
+        assert_eq!(parse("five--"), expr!(suf Decrement five));
+    }
+
+    #[test]
+    fn simple_cond() {
+        assert_eq!(parse("0 ? ok : not_ok"), expr!(0.0 ? ok : not_ok));
+        assert_eq!(parse("test ? 5 : zero"), expr!(test ? 5.0 : zero));
+    }
+
+    #[test]
+    fn operator_precedence() {
+        assert_eq!(parse("1 + 2 * 3"), expr!(Add 1.0 (Multiply 2.0 3.0)));
+        assert_eq!(
+            parse("((3 + 1) * 2) / 3"),
+            expr!(Divide (Multiply (Add 3.0 1.0) 2.0) 3.0)
+        );
+        assert_eq!(
+            parse("hello += 2 & 0b0010"),
+            expr!(AssignAdd hello (BitAnd 2.0 2.0))
+        );
+        assert_eq!(
+            parse("(hello %= 2) & 0b0010"),
+            expr!(BitAnd (AssignModulo hello 2.0) 2.0)
+        );
+        assert_eq!(
+            parse("test ? ++2 : test % one++"),
+            expr!(test ? (pre Increment 2.0) : (Modulo test (suf Increment one)))
+        );
+        assert_eq!(
+            parse("(test ? 5 : 5 * 9 + 2) % 2 == 0"),
+            expr!((Equal (Modulo (test ? 5.0 : (Add (Multiply 5.0 9.0) 2.0)) 2.0) 0.0))
+        );
+        assert_eq!(
+            parse("(test ? 5 : 5 * 9 + 2) % 2 == 0"),
+            expr!((Equal (Modulo (test ? 5.0 : (Add (Multiply 5.0 9.0) 2.0)) 2.0) 0.0))
+        );
+        assert_eq!(
+            parse("(!2 * (3 + 2) ? (5 ^ hi) : 2 >> (world = 3))"),
+            expr!((Multiply (pre Not 2.0) (Add 3.0 2.0)) ? (BitExclusiveOr 5.0 hi) : (RightShift 2.0 (Assign world 3.0)))
+        );
+
+        assert_eq!(
+            parse("(!2 * (3 + 2) ? (5 ^ hi) : 2 >> (world = 3))"),
+            expr!((Multiply (pre Not 2.0) (Add 3.0 2.0)) ? (BitExclusiveOr 5.0 hi) : (RightShift 2.0 (Assign world 3.0)))
+        );
+        assert_eq!(
+            parse("(2 + 3) * (5 - 8)"),
+            expr!((Multiply (Add 2.0 3.0) (Subtract 5.0 8.0)))
+        );
+        assert_eq!(
+            parse("(x = (+(3 - 5) - -(5 % 2)))"),
+            expr!((Assign x (Subtract (pre Add (Subtract 3.0 5.0)) (pre Subtract (Modulo 5.0 2.0)))))
+        );
+        assert_eq!(parse("1 * (3 + 2)"), expr!(Multiply 1.0 (Add 3.0 2.0)));
+        assert_eq!(parse("++(1)"), expr!(pre Increment 1.0));
+        assert_eq!(
+            parse("++(1-- * (3))"),
+            expr!(pre Increment (Multiply (suf Decrement 1.0) 3.0))
+        );
+    }
+}
