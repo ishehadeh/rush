@@ -135,7 +135,7 @@ impl Expr {
                 let copy = suf.left.clone().evaluate(vars);
                 match suf.operator {
                     Operator::Increment => suf.left.modify_variable(vars, |v| v + 1.0),
-                    Operator::Decrement => suf.left.modify_variable(vars, |v| v + 1.0),
+                    Operator::Decrement => suf.left.modify_variable(vars, |v| v - 1.0),
                     _ => unreachable!(),
                 };
                 copy
