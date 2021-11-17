@@ -18,7 +18,7 @@ macro_rules! expect_infix {
         }) {
             Some(v) => v,
             None => {
-                return Err(Error::from(ErrorKind::InvalidPrefixOperator)
+                return Err(Error::from(ErrorKind::InvalidInfixOperator)
                     .with($_self.context($_self.peek().clone().unwrap())))
             }
         }
