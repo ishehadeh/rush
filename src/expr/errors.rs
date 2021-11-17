@@ -71,7 +71,7 @@ impl failure::Fail for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}\n", self.inner)?;
+        writeln!(f, "{}", self.inner)?;
         match &self.parser_context {
             Some(v) => write!(f, "{}", v),
             None => Ok(()),
@@ -101,11 +101,11 @@ impl fmt::Display for Context {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let prefix = format!("{} |", " ".repeat(self.line.to_string().len()));
 
-        write!(f, "{}\n", prefix)?;
-        write!(f, "{} |  {}\n", self.line, self.input)?;
-        write!(
+        writeln!(f, "{}", prefix)?;
+        writeln!(f, "{} |  {}", self.line, self.input)?;
+        writeln!(
             f,
-            "{}  {}{}\n",
+            "{}  {}{}",
             prefix,
             " ".repeat(self.column),
             "^".repeat(self.token.len())
