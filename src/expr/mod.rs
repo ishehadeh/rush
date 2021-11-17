@@ -5,11 +5,13 @@ pub mod lexer;
 pub mod parser;
 pub mod types;
 
-pub use self::errors::*;
-pub use self::parser::parse;
-pub use self::types::Expr;
-use self::types::Operator;
+pub use errors::*;
+pub use parser::parse;
+pub use types::Expr;
+
 use crate::env::Variables;
+use types::Operator;
+
 use nom::types::CompleteStr;
 use std::ffi::OsString;
 use std::str::FromStr;
