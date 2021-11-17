@@ -230,3 +230,169 @@ impl FromStr for Expr {
         parse(s)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::ffi::OsString;
+
+    use crate::{
+        env::Variables,
+        expr::{parse, Expr},
+    };
+
+    fn eval(source: &str, vars: &mut Variables) -> Expr {
+        parse(&source)
+            .unwrap_or_else(|err| panic!("failed to evaluate '{}': {}", source, err))
+            .evaluate(vars)
+    }
+
+    #[test]
+    fn ops_assignemnt() {
+        let mut vars = Variables::new();
+        eval("a = 1", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "1");
+
+        vars.define("a", "1");
+        eval("a += 5/2", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "3.5");
+
+        vars.define("a", "1");
+        eval("a -= 2.5", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "-1.5");
+
+        vars.define("a", "5");
+        eval("a *= 2", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "10");
+
+        vars.define("a", "9");
+        eval("a /= 3", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "3");
+
+        vars.define("a", "9");
+        eval("a %= 2", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "1");
+
+        vars.define("a", "2");
+        eval("a ^= 3", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "1");
+
+        vars.define("a", "3");
+        eval("a |= 8", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "11");
+
+        vars.define("a", "3");
+        eval("a >>= 1", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "1");
+
+        vars.define("a", "3");
+        eval("a <<= 3", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "24");
+
+        vars.define("a", "3");
+        eval("a &= 0b101", &mut vars);
+        assert_eq!(vars.value(&OsString::from("a")), "1");
+    }
+
+    #[test]
+    fn ops_suffix() {
+        let mut vars = Variables::new();
+
+        vars.define("n", "0");
+        assert_eq!(eval("n++", &mut vars), Expr::Number(0.0));
+        assert_eq!(vars.value(&OsString::from("n")), "1");
+        assert_eq!(eval("n--", &mut vars), Expr::Number(1.0));
+        assert_eq!(vars.value(&OsString::from("n")), "0");
+
+        assert_eq!(eval("2++", &mut vars), Expr::Number(2.0));
+        assert_eq!(eval("5.1--", &mut vars), Expr::Number(5.1));
+    }
+
+    #[test]
+    fn ops_prefix() {
+        let mut vars = Variables::new();
+
+        vars.define("n", "0");
+        assert_eq!(eval("--n", &mut vars), Expr::Number(-1.0));
+        assert_eq!(vars.value(&OsString::from("n")), "-1");
+        assert_eq!(eval("++n", &mut vars), Expr::Number(0.0));
+        assert_eq!(vars.value(&OsString::from("n")), "0");
+
+        assert_eq!(eval("!0", &mut vars), Expr::Number(1.0));
+        assert_eq!(eval("!5", &mut vars), Expr::Number(0.0));
+        assert_eq!(eval("~0b10111001", &mut vars), Expr::Number(-186.0));
+
+        vars.define("x", "-5");
+        vars.define("y", "9");
+        assert_eq!(eval("-x", &mut vars), Expr::Number(5.0));
+        assert_eq!(vars.value(&OsString::from("x")), "-5");
+        assert_eq!(eval("+x", &mut vars), Expr::Number(-5.0));
+        assert_eq!(vars.value(&OsString::from("x")), "-5");
+
+        assert_eq!(eval("+y", &mut vars), Expr::Number(9.0));
+        assert_eq!(eval("-y", &mut vars), Expr::Number(-9.0));
+
+        assert_eq!(eval("+(1 + 2)", &mut vars), Expr::Number(3.0));
+    }
+
+    #[test]
+    fn ops_bitwise() {
+        let mut vars = Variables::new();
+
+        assert_eq!(eval("8 >> 1", &mut vars), Expr::Number(4.0));
+        assert_eq!(eval("4 << 3", &mut vars), Expr::Number(32.0));
+        assert_eq!(eval("32 & 2", &mut vars), Expr::Number(0.0));
+        assert_eq!(eval("5 | 8", &mut vars), Expr::Number(13.0));
+        assert_eq!(eval("5 ^ 9", &mut vars), Expr::Number(12.0));
+    }
+
+    #[test]
+    fn ops_arithmetic() {
+        let mut vars = Variables::new();
+
+        assert_eq!(eval("2.53 + 1", &mut vars), Expr::Number(3.53));
+        assert_eq!(eval("11 - 5", &mut vars), Expr::Number(6.0));
+        assert_eq!(eval("3 * 9", &mut vars), Expr::Number(27.0));
+        assert_eq!(eval("1 / 10", &mut vars), Expr::Number(0.1));
+        assert_eq!(eval("5 % 3", &mut vars), Expr::Number(2.0));
+    }
+
+    #[test]
+    fn ops_comparison() {
+        let mut vars = Variables::new();
+
+        assert_eq!(eval("2.53 < 2.54", &mut vars), Expr::Number(1.0));
+        assert_eq!(eval("3 > 5", &mut vars), Expr::Number(0.0));
+        assert_eq!(eval("2.99 <= 3", &mut vars), Expr::Number(1.0));
+        assert_eq!(eval("3.00 >= 3", &mut vars), Expr::Number(1.0));
+        assert_eq!(eval("99.0002 == 99", &mut vars), Expr::Number(0.0));
+        assert_eq!(eval("5 != -5", &mut vars), Expr::Number(1.0));
+    }
+
+    #[test]
+    fn ops_boolean() {
+        let mut vars = Variables::new();
+
+        vars.define("a", "0.5");
+
+        assert_eq!(eval("0 || 11", &mut vars), Expr::Number(1.0));
+        assert_eq!(eval("5 || 0", &mut vars), Expr::Number(1.0));
+        assert_eq!(eval("0 || -1 + 1", &mut vars), Expr::Number(0.0));
+        assert_eq!(eval("2 && 0", &mut vars), Expr::Number(0.0));
+        assert_eq!(eval("0 && 5", &mut vars), Expr::Number(0.0));
+        assert_eq!(eval("1 && ~0", &mut vars), Expr::Number(1.0));
+        assert_eq!(eval("5 && a && -1", &mut vars), Expr::Number(1.0));
+        assert_eq!(eval("0 || !1 || a", &mut vars), Expr::Number(1.0));
+    }
+
+    #[test]
+    fn ops_complex() {
+        let mut vars = Variables::new();
+        assert_eq!(
+            eval(
+                "(((a = 0 ? 3 : 1) + 5 | (3 + 5) / 2 == 7 & ~a) ? (7 % 2 > 0) ^ 2 : -1) / 3 + !a * 1.5",
+                &mut vars,
+            ),
+            Expr::Number(2.5)
+        );
+    }
+}
