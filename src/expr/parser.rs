@@ -102,15 +102,15 @@ impl<'a> Parser<'a> {
                 Token::Number(n) => Expr::Number(n as f64),
                 Token::FloatingNumber(n) => Expr::Number(n),
                 Token::Variable(n) => Expr::Variable(n.to_string()),
-                Token::Operator(op) => {
-                    if !op.is_prefix() {
+                Token::Operator(operator) => {
+                    if !operator.is_prefix() {
                         return Err(
                             Error::from(ErrorKind::InvalidPrefixOperator).with(self.context(v))
                         );
                     }
 
                     Expr::Prefix(Box::new(Prefix {
-                        operator: op,
+                        operator,
                         right: self.must_parse_precedence(Precedence::Prefix)?,
                     }))
                 }
@@ -138,12 +138,9 @@ impl<'a> Parser<'a> {
 
         match self.peek().clone() {
             Some(v) => match v {
-                Token::Operator(o) => {
-                    if o.is_suffix() {
-                        left = Expr::Suffix(Box::new(Suffix {
-                            left: left,
-                            operator: o,
-                        }));
+                Token::Operator(operator) => {
+                    if operator.is_suffix() {
+                        left = Expr::Suffix(Box::new(Suffix { left, operator }));
                         self.next()?;
                     }
                 }
@@ -157,9 +154,9 @@ impl<'a> Parser<'a> {
         while token_precedence < precedence {
             left = match self.next()? {
                 Some(v) => match v {
-                    Token::Operator(o) => Expr::Infix(Box::new(Infix {
-                        left: left,
-                        operator: o,
+                    Token::Operator(operator) => Expr::Infix(Box::new(Infix {
+                        left,
+                        operator,
                         right: self.must_parse_precedence(token_precedence)?,
                     })),
                     Token::QuestionMark => {
@@ -176,8 +173,8 @@ impl<'a> Parser<'a> {
 
                         Expr::Condition(Box::new(Condition {
                             condition: left,
-                            on_true: on_true,
-                            on_false: on_false,
+                            on_true,
+                            on_false,
                         }))
                     }
                     Token::Comma | Token::Colon | Token::RightParen => break,
