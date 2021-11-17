@@ -156,22 +156,19 @@ impl Precedence {
 
 impl Operator {
     pub fn is_prefix(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Operator::Not
-            | Operator::Negate
-            | Operator::Increment
-            | Operator::Decrement
-            | Operator::Add
-            | Operator::Subtract => true,
-            _ => false,
-        }
+                | Operator::Negate
+                | Operator::Increment
+                | Operator::Decrement
+                | Operator::Add
+                | Operator::Subtract
+        )
     }
 
     pub fn is_suffix(&self) -> bool {
-        match self {
-            Operator::Increment | Operator::Decrement => true,
-            _ => false,
-        }
+        matches!(self, Operator::Increment | Operator::Decrement)
     }
 
     pub fn precedence(&self) -> Precedence {
