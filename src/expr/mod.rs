@@ -127,7 +127,7 @@ impl Expr {
                     }
                 }
                 Operator::Negate => pre.right.modify_number(vars, |x| !(x as isize) as f64),
-                Operator::Add => pre.right,
+                Operator::Add => pre.right.evaluate(vars),
                 Operator::Subtract => pre.right.modify_number(vars, |x| -x),
                 _ => unreachable!(),
             },
