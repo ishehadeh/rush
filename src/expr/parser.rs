@@ -1,6 +1,8 @@
-use crate::expr::errors::*;
-use crate::expr::lexer::TokenStream;
-use crate::expr::types::*;
+use super::{
+    lexer::TokenStream,
+    types::{Condition, Infix, Precedence, Prefix, Suffix, Token},
+    Context, Error, ErrorKind, Expr, Result,
+};
 
 pub struct Parser<'a> {
     tokens: TokenStream<'a>,
