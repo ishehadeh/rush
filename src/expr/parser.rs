@@ -165,14 +165,11 @@ impl<'a> Parser<'a> {
                     Token::QuestionMark => {
                         let on_true = self.must_parse_precedence(token_precedence.clone())?;
                         match self.next()? {
-                            Some(v) => match v {
-                                Token::Colon => (),
+                            Some(Token::Colon) => (),
                                 _ => {
                                     return Err(Error::from(ErrorKind::ExpectingTernaryElse)
                                         .with(self.context(v)))
                                 }
-                            },
-                            None => return Ok(None),
                         };
 
                         let on_false = self.must_parse_precedence(token_precedence)?;
