@@ -160,7 +160,7 @@ impl<'a> Parser<'a> {
                         right: self.must_parse_precedence(token_precedence)?,
                     })),
                     Token::QuestionMark => {
-                        let on_true = self.must_parse_precedence(token_precedence.clone())?;
+                        let on_true = self.must_parse_precedence(token_precedence)?;
                         match self.next()? {
                             Some(Token::Colon) => (),
                             _ => {
