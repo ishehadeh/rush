@@ -43,7 +43,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<Expr> {
-        self.next()?;
+        self.next_token()?;
         self.must_parse_precedence(Precedence::Separator)
     }
 
@@ -55,7 +55,7 @@ impl<'a> Parser<'a> {
         &self.peek
     }
 
-    pub fn next(&mut self) -> Result<Option<Token<'a>>> {
+    pub fn next_token(&mut self) -> Result<Option<Token<'a>>> {
         let tok = self.peek.clone();
         self.column = self.tokens.column();
         self.peek = match self.tokens.next() {
@@ -97,7 +97,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> Result<Option<Expr>> {
-        let mut left = match self.next()? {
+        let mut left = match self.next_token()? {
             Some(v) => match v {
                 Token::Number(n) => Expr::Number(n as f64),
                 Token::FloatingNumber(n) => Expr::Number(n),
@@ -117,7 +117,7 @@ impl<'a> Parser<'a> {
                 Token::LeftParen => {
                     let new_left = self.must_parse_precedence(Precedence::Parentheses)?;
 
-                    match self.next()? {
+                    match self.next_token()? {
                         Some(v) => match v {
                             Token::RightParen => new_left,
                             _ => {
@@ -141,7 +141,7 @@ impl<'a> Parser<'a> {
                 Token::Operator(operator) => {
                     if operator.is_suffix() {
                         left = Expr::Suffix(Box::new(Suffix { left, operator }));
-                        self.next()?;
+                        self.next_token()?;
                     }
                 }
                 Token::RightParen => return Ok(Some(left)),
@@ -152,7 +152,7 @@ impl<'a> Parser<'a> {
         let mut token_precedence = expect_infix!(self, left);
 
         while token_precedence < precedence {
-            left = match self.next()? {
+            left = match self.next_token()? {
                 Some(v) => match v {
                     Token::Operator(operator) => Expr::Infix(Box::new(Infix {
                         left,
@@ -161,7 +161,7 @@ impl<'a> Parser<'a> {
                     })),
                     Token::QuestionMark => {
                         let on_true = self.must_parse_precedence(token_precedence)?;
-                        match self.next()? {
+                        match self.next_token()? {
                             Some(Token::Colon) => (),
                             _ => {
                                 return Err(Error::from(ErrorKind::ExpectingTernaryElse)
