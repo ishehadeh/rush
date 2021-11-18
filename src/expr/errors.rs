@@ -83,7 +83,7 @@ impl From<failure::Context<ErrorKind>> for Error {
     fn from(inner: failure::Context<ErrorKind>) -> Error {
         Error {
             parser_context: None,
-            inner: inner,
+            inner,
         }
     }
 }
