@@ -20,6 +20,32 @@ pub fn eval<T: AsRef<str>>(s: T, vars: &mut Variables) -> Result<String> {
     Ok(parse(s.as_ref())?.evaluate(vars).to_string())
 }
 
+/// Check if two floating point numbers are equal.
+///
+/// Allow for some slight differences to account for floating-point inaccuracies
+/// Adapted from https://web.archive.org/web/20211031140941/https://floating-point-gui.de/errors/comparison/
+pub(crate) fn float_nearly_eq(a: f64, b: f64) -> bool {
+    const MIN_NORMAL: f64 = 1.175494351e-38f64;
+
+    let abs_a = a.abs();
+    let abs_b = b.abs();
+    let diff = (a - b).abs();
+    if a == b {
+        // quick check, handles Inf
+        true
+    } else if a == 0.0 || b == 0.0 || (abs_a + abs_b) < MIN_NORMAL {
+        // error is less relevant when x or y is *very* close to zero.
+        diff < f64::EPSILON * MIN_NORMAL
+    } else {
+        // use relative error
+        //    this check is used in place of `diff < f64::EPSILON` beckause just comparing the diff with epsilon
+        //    may return true on numbers that aren't close if the numbers being compared are small enough.
+        //    For example 0.00000000000000104 - 0.00000000000000102 is less than epsilon,
+        //    even though the difference is significant relative to the numbers.
+        diff / (abs_a + abs_b).min(f64::MAX) < f64::EPSILON
+    }
+}
+
 impl Expr {
     pub fn as_boolean(&self) -> bool {
         match self {
@@ -168,10 +194,10 @@ impl Expr {
                         .modify_number(vars, |v| (v >= right) as isize as f64),
                     Operator::Equal => inf
                         .left
-                        .modify_number(vars, |v| (v == right) as isize as f64),
+                        .modify_number(vars, |v| float_nearly_eq(v, right) as isize as f64),
                     Operator::NotEqual => inf
                         .left
-                        .modify_number(vars, |v| (v != right) as isize as f64),
+                        .modify_number(vars, |v| !float_nearly_eq(v, right) as isize as f64),
                     Operator::BitAnd => inf.left.modify_number_i(vars, |v| v & right as isize),
                     Operator::BitExclusiveOr => {
                         inf.left.modify_number_i(vars, |v| v ^ right as isize)
@@ -366,6 +392,21 @@ mod test {
         assert_eq!(eval("3.00 >= 3", &mut vars), Expr::Number(1.0));
         assert_eq!(eval("99.0002 == 99", &mut vars), Expr::Number(0.0));
         assert_eq!(eval("5 != -5", &mut vars), Expr::Number(1.0));
+
+        // TODO: add more float_nearly_eq tests
+        assert_eq!(
+            eval("0 != 0.00000000000000001", &mut vars),
+            Expr::Number(1.0)
+        );
+        assert_eq!(
+            eval(".3 == 0.30000000000000001", &mut vars),
+            Expr::Number(1.0)
+        );
+        assert_eq!(
+            eval(".3 < 0.30000000000000001", &mut vars),
+            Expr::Number(0.0)
+        );
+        assert_eq!(eval("0.5e-38 != 0.51e-38", &mut vars), Expr::Number(1.0));
     }
 
     #[test]
