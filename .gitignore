@@ -2,3 +2,6 @@
 **/*.rs.bk
 
 .vscode/
+
+# Files written and read in unit tests
+test/data/*-out.txt

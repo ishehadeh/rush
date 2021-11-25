@@ -9,6 +9,7 @@ extern crate nixterm;
 
 pub mod env;
 pub mod expr;
+pub mod jobs;
 pub mod lang;
 pub mod shell;
 
