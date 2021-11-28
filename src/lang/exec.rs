@@ -319,13 +319,13 @@ impl JobManager {
             .filter(|jid| self.completed_jobs.get(jid).is_none())
             .collect();
 
-        let mut completed = self.next()?;
-        while incomplete.len() > 0 {
-            self.completed_jobs.insert(completed.0, completed.1);
-            completed = self.next()?;
+        while !incomplete.is_empty() {
+            let completed = self.next()?;
+
             incomplete.remove(&completed.0);
+            self.completed_jobs.insert(completed.0, completed.1);
         }
-        self.completed_jobs.insert(completed.0, completed.1);
+
         Ok(())
     }
 }
