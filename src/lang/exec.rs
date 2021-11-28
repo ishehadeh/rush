@@ -1,6 +1,7 @@
 use crate::env::functions::Functions;
 use crate::env::traps;
 use crate::env::variables::Variables;
+use crate::jobs::spawn::ProcessOptions;
 use crate::lang::ast::Command;
 use crate::lang::ast::ConditionOperator;
 use crate::lang::word::Word;
@@ -47,7 +48,7 @@ pub struct JobManager {
 
 struct ProcOptions<'a> {
     close_fds: &'a Vec<RawFd>,
-    env: &'a [CString],
+    env: &'a [(String, String)],
     stdin: Option<RawFd>,
     stdout: Option<RawFd>,
 }
@@ -134,50 +135,6 @@ impl JobManager {
         jid
     }
 
-    /// Low level function to smooth over fork + execv[e]
-    fn spawn_proc<'a>(
-        &mut self,
-        exe: &CString,
-        args: &[CString],
-        path: &PathBuf,
-        opts: &'a ProcOptions<'a>,
-    ) -> Result<Jid> {
-        match unistd::fork().context(ErrorKind::ExecFailed)? {
-            unistd::ForkResult::Child => {
-                for fd in opts.close_fds {
-                    unistd::close(*fd);
-                }
-
-                if let Some(stdin) = opts.stdin {
-                    unistd::dup2(stdin, 0);
-                }
-
-                if let Some(stdout) = opts.stdout {
-                    unistd::dup2(stdout, 1);
-                }
-
-                unistd::chdir(path);
-                if opts.env.len() == 0 {
-                    unistd::execv(exe, args).unwrap();
-                } else {
-                    let mut exe_env: Vec<CString> = env::vars_os()
-                        .map(|(k, v)| {
-                            let mut kv = OsString::with_capacity(k.len() + 1 + v.len());
-                            kv.push(k.into_string().unwrap());
-                            kv.push("=");
-                            kv.push(v.into_string().unwrap());
-                            CString::new(kv.into_string().unwrap().as_bytes()).unwrap()
-                        })
-                        .collect();
-                    exe_env.extend(opts.env.iter().map(|e| e.clone()));
-                    unistd::execve(&exe, args, &exe_env).unwrap();
-                }
-                unreachable!();
-            }
-            unistd::ForkResult::Parent { child } => Ok(self.add_job(child)),
-        }
-    }
-
     // spawn 0 or more processes based on a shell-language abstract syntax tree in a given execution context
     fn spawn_procs_from_ast<'a>(
         &mut self,
@@ -187,26 +144,52 @@ impl JobManager {
     ) -> Result<Vec<Jid>> {
         match command {
             Command::SimpleCommand(cmd) => {
-                let mut args = Vec::with_capacity(cmd.arguments.len());
-                for w in &cmd.arguments {
-                    let arg = w.compile(&mut ec.vars).context(ErrorKind::ExecFailed)?;
-                    args.push(CString::new(arg.as_bytes()).context(ErrorKind::ExecFailed)?);
-                }
-
-                // TODO check args count
-                let argv0 = args[0].to_string_lossy().to_string();
+                // TODO: make sure theres at least 1 argument
+                let argv0 = cmd.arguments[0]
+                    .compile(ec.variables_mut())
+                    .context(ErrorKind::ExecFailed)?;
 
                 if let Some(body) = ec.functions().value(&argv0) {
                     self.spawn_procs_from_ast(opts, ec, &body)
                 } else {
-                    let exe = if !argv0.starts_with("./") {
-                        ec.find_executable(argv0)?
+                    let mut proc = if argv0.starts_with("./") {
+                        ProcessOptions::new(&argv0)
                     } else {
-                        PathBuf::from(argv0)
+                        let executable = ec.find_executable(&argv0)?.to_string_lossy().to_string();
+                        ProcessOptions::new(&executable)
                     };
 
-                    let c_exe = CString::new(exe.to_str().unwrap().as_bytes()).unwrap();
-                    Ok(vec![self.spawn_proc(&c_exe, &args, &ec.cwd, opts)?])
+                    // The first argument is the command used to run the executable
+                    // Avoid compiling it again since that can have side effects (e.g. "./exe$(exe += 1))")
+                    proc.arg(&argv0);
+                    for arg in cmd.arguments.iter().skip(1) {
+                        proc.arg(
+                            &arg.compile(ec.variables_mut())
+                                .context(ErrorKind::ExecFailed)?,
+                        );
+                    }
+
+                    for (k, v) in opts.env {
+                        proc.env(k, v);
+                    }
+
+                    proc.work_dir(&ec.cwd);
+
+                    if let Some(stdin) = opts.stdin {
+                        proc.redirect(stdin, 0);
+                        proc.close(stdin);
+                    }
+
+                    if let Some(stdout) = opts.stdout {
+                        proc.redirect(stdout, 1);
+                        proc.close(stdout);
+                    }
+                    for &close in opts.close_fds {
+                        proc.close(close);
+                    }
+                    let pid = proc.spawn().context(ErrorKind::ExecFailed)?;
+
+                    Ok(vec![self.add_job(pid)])
                 }
             }
             Command::Pipeline(pipe) => {
