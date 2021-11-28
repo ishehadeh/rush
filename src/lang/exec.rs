@@ -351,19 +351,19 @@ impl ExecutionContext {
         Self::default()
     }
 
-    pub fn variables<'a>(&'a self) -> &'a Variables {
+    pub fn variables(&self) -> &Variables {
         &self.vars
     }
 
-    pub fn variables_mut<'a>(&'a mut self) -> &'a mut Variables {
+    pub fn variables_mut(&mut self) -> &mut Variables {
         &mut self.vars
     }
 
-    pub fn functions<'a>(&'a self) -> &'a Functions {
+    pub fn functions(&self) -> &Functions {
         &self.funcs
     }
 
-    pub fn functions_mut<'a>(&'a mut self) -> &'a mut Functions {
+    pub fn functions_mut(&mut self) -> &mut Functions {
         &mut self.funcs
     }
 
