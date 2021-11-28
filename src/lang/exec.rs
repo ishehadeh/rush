@@ -99,7 +99,7 @@ impl JobManager {
                         (
                             *jid,
                             ExitStatus {
-                                pid: pid,
+                                pid,
                                 exit_code: code,
                                 core_dumped: false,
                                 signal: None,
@@ -112,7 +112,7 @@ impl JobManager {
                         (
                             *jid,
                             ExitStatus {
-                                pid: pid,
+                                pid,
                                 exit_code: -1,
                                 core_dumped: core_dump,
                                 signal: Some(sig),
