@@ -554,4 +554,41 @@ mod test {
             .expect("failed to read out file");
         assert_eq!(content, "hello\nworld");
     }
+
+    #[test]
+    fn expands_vars() {
+        forks!();
+
+        std::env::set_var("EXPAND_ENV_VARS_TEST", "helloworld");
+        let mut ec = ExecutionContext::new();
+        let mut jm = JobManager::new();
+
+        let status = jm
+            .run(
+                &mut ec,
+                Command::simple(vec![
+                    Word::parse("test"),
+                    Word::parse("$EXPAND_ENV_VARS_TEST"),
+                    Word::parse("="),
+                    Word::parse("helloworld"),
+                ]),
+            )
+            .expect("failed to execute printf failed");
+        assert_eq!(status.exit_code, 0);
+
+        ec.variables_mut()
+            .define("EXPAND_ENV_VARS_TEST", "shadowed");
+        let status = jm
+            .run(
+                &mut ec,
+                Command::simple(vec![
+                    Word::parse("test"),
+                    Word::parse("$EXPAND_ENV_VARS_TEST"),
+                    Word::parse("="),
+                    Word::parse("shadowed"),
+                ]),
+            )
+            .expect("failed to execute printf failed");
+        assert_eq!(status.exit_code, 0);
+    }
 }
