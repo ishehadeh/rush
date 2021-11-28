@@ -368,3 +368,190 @@ impl ExecutionContext {
         Err(Error::from(ErrorKind::MissingExecutable(owned_prog)))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::{
+        fs::File,
+        io::{self, Read},
+    };
+
+    use crate::{
+        lang::{
+            ast::{Command, ConditionOperator},
+            word::Word,
+        },
+        test_util::forks,
+    };
+
+    use super::{ExecutionContext, JobManager};
+
+    #[test]
+    fn simple_command() {
+        forks!();
+
+        let mut ec = ExecutionContext::new();
+        let mut jm = JobManager::new();
+        let status = jm
+            .run(&mut ec, Command::simple(vec![Word::parse("true")]))
+            .expect("failed to execute 'true'");
+
+        assert_eq!(status.exit_code, 0);
+    }
+
+    #[test]
+    fn pipeline() {
+        forks!();
+
+        let out_file = "test/data/pipeline-out.txt";
+        match std::fs::remove_file(&out_file) {
+            Ok(_) => (),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(err) => panic!("failed to remove file: {}", err),
+        }
+
+        let mut ec = ExecutionContext::new();
+        let mut jm = JobManager::new();
+        let status = jm
+            .run(
+                &mut ec,
+                Command::pipeline(
+                    false,
+                    Command::simple(vec![
+                        Word::parse("printf"),
+                        Word::parse("%s"),
+                        Word::parse("hello"),
+                    ]),
+                    Command::simple(vec![
+                        Word::parse("cp"),
+                        Word::parse("/dev/stdin"),
+                        Word::parse(out_file),
+                    ]),
+                ),
+            )
+            .expect("failed to execute pipeline");
+
+        assert_eq!(status.exit_code, 0);
+
+        let mut content = String::new();
+        File::open(out_file)
+            .expect("failed to open out file")
+            .read_to_string(&mut content)
+            .expect("failed to read out file");
+        assert_eq!(content, "hello");
+    }
+
+    #[test]
+    fn cond_and() {
+        forks!();
+
+        let mut ec = ExecutionContext::new();
+        let mut jm = JobManager::new();
+        let status = jm
+            .run(
+                &mut ec,
+                Command::conditional(
+                    Command::simple(vec![Word::parse("true")]),
+                    ConditionOperator::AndIf,
+                    Command::simple(vec![Word::parse("true")]),
+                ),
+            )
+            .expect("failed to execute true && true");
+        assert_eq!(status.exit_code, 0);
+
+        let status = jm
+            .run(
+                &mut ec,
+                Command::conditional(
+                    Command::simple(vec![Word::parse("true")]),
+                    ConditionOperator::AndIf,
+                    Command::simple(vec![Word::parse("false")]),
+                ),
+            )
+            .expect("failed to execute true && false");
+        assert_eq!(status.exit_code, 1);
+    }
+
+    #[test]
+    fn cond_or() {
+        forks!();
+
+        let mut ec = ExecutionContext::new();
+        let mut jm = JobManager::new();
+        let status = jm
+            .run(
+                &mut ec,
+                Command::conditional(
+                    Command::simple(vec![Word::parse("true")]),
+                    ConditionOperator::OrIf,
+                    Command::simple(vec![Word::parse("true")]),
+                ),
+            )
+            .expect("failed to execute true || true");
+        assert_eq!(status.exit_code, 0);
+
+        let status = jm
+            .run(
+                &mut ec,
+                Command::conditional(
+                    Command::simple(vec![Word::parse("true")]),
+                    ConditionOperator::OrIf,
+                    Command::simple(vec![Word::parse("false")]),
+                ),
+            )
+            .expect("failed to execute true || false");
+        assert_eq!(status.exit_code, 0);
+
+        let status = jm
+            .run(
+                &mut ec,
+                Command::conditional(
+                    Command::simple(vec![Word::parse("false")]),
+                    ConditionOperator::OrIf,
+                    Command::simple(vec![Word::parse("false")]),
+                ),
+            )
+            .expect("failed to execute false || false");
+        assert_eq!(status.exit_code, 1);
+    }
+
+    #[test]
+    fn group_pipeline() {
+        forks!();
+
+        let out_file = "test/data/group_pipeline-out.txt";
+        match std::fs::remove_file(&out_file) {
+            Ok(_) => (),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(err) => panic!("failed to remove file: {}", err),
+        }
+
+        let mut ec = ExecutionContext::new();
+        let mut jm = JobManager::new();
+        let status = jm
+            .run(
+                &mut ec,
+                Command::pipeline(
+                    false,
+                    Command::group(vec![
+                        Command::simple(vec![Word::parse("printf"), Word::parse("hello\\n")]),
+                        Command::simple(vec![Word::parse("printf"), Word::parse("world")]),
+                    ]),
+                    Command::simple(vec![
+                        Word::parse("cp"),
+                        Word::parse("/dev/stdin"),
+                        Word::parse(out_file),
+                    ]),
+                ),
+            )
+            .expect("failed to execute true || true");
+        assert_eq!(status.exit_code, 0);
+
+        let mut content = String::new();
+        File::open(out_file)
+            .expect("failed to open out file")
+            .read_to_string(&mut content)
+            .expect("failed to read out file");
+        assert_eq!(content, "hello\nworld");
+    }
+}
