@@ -78,7 +78,7 @@ impl JobManager {
         };
 
         let jids = self.spawn_procs_from_ast(&opts, ec, &command)?;
-        self.await_all(&jids);
+        self.await_all(&jids)?;
         Ok(jids
             .last()
             .map(|id| *self.completed_jobs.get(id).unwrap())
@@ -250,7 +250,7 @@ impl JobManager {
                 let mut subenv = ec.clone();
                 for cmd in &group.commands {
                     let jids = self.spawn_procs_from_ast(opts, &mut subenv, &cmd)?;
-                    self.await_all(&jids);
+                    self.await_all(&jids)?;
                 }
                 Ok(Vec::new())
             }
@@ -258,13 +258,13 @@ impl JobManager {
                 let mut exit_code = 0;
                 for cmd in &group.commands {
                     let jids = self.spawn_procs_from_ast(opts, ec, &cmd)?;
-                    self.await_all(&jids);
+                    self.await_all(&jids)?;
                 }
                 Ok(Vec::new())
             }
             Command::ConditionalPair(cond) => {
                 let jobs_left = self.spawn_procs_from_ast(opts, ec, &cond.left)?;
-                self.await_all(&jobs_left);
+                self.await_all(&jobs_left)?;
                 let exit_code = jobs_left
                     .last()
                     .map(|r| self.completed_jobs.get(r).unwrap().exit_code)
@@ -273,7 +273,7 @@ impl JobManager {
                     || (exit_code != 0 && cond.operator == ConditionOperator::OrIf)
                 {
                     let jobs_right = self.spawn_procs_from_ast(opts, ec, &cond.right)?;
-                    self.await_all(&jobs_right);
+                    self.await_all(&jobs_right)?;
                     Ok(jobs_right)
                 } else {
                     Ok(jobs_left)
