@@ -1,21 +1,25 @@
-use crate::env::functions::Functions;
-use crate::env::traps;
-use crate::env::variables::Variables;
-use crate::jobs::spawn::ProcessOptions;
-use crate::lang::ast::Command;
-use crate::lang::ast::ConditionOperator;
-use crate::lang::word::Word;
-use crate::lang::{Error, ErrorKind, Result};
+use crate::{
+    env::{functions::Functions, variables::Variables},
+    jobs::spawn::ProcessOptions,
+    lang::{
+        ast::{Command, ConditionOperator},
+        Error, ErrorKind, Result,
+    },
+};
 use failure::ResultExt;
-use nix::libc;
-use nix::sys::signal;
-use nix::sys::wait::{wait, WaitStatus};
-use nix::unistd;
-use std::collections::{BTreeMap, BTreeSet};
-use std::env;
-use std::ffi::{CString, OsStr, OsString};
-use std::os::unix::io::RawFd;
-use std::path::PathBuf;
+use nix::{
+    libc,
+    sys::signal,
+    sys::wait::{wait, WaitStatus},
+    unistd,
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+    ffi::{OsStr, OsString},
+    os::unix::io::RawFd,
+    path::PathBuf,
+};
 
 #[derive(Debug, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Jid(u32);
