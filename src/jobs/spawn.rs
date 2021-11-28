@@ -541,4 +541,45 @@ mod test {
             .expect("failed to read file");
         assert_eq!(content, "olleh");
     }
+
+    #[test]
+    fn modify_environment() {
+        forks!();
+
+        let (infd, outfd) = nix::unistd::pipe().expect("failed to create pipe");
+
+        let pid = ProcessOptions::new("/usr/bin/env")
+            .arg("env")
+            .env("HELLO_ENV", "hi env")
+            .redirect(outfd, 1)
+            .close(outfd)
+            .close(infd)
+            .spawn()
+            .expect("failed to spawn env");
+
+        nix::unistd::close(outfd).expect("failed to close pipe output in parent");
+
+        std::env::var("HELLO_ENV")
+            .expect_err("the environment variable should not be set in the parent process");
+        let mut all = String::new();
+        loop {
+            let mut buf = [0u8; 2048];
+            let read = nix::unistd::read(infd, &mut buf).expect("failed to read from pipe");
+
+            all.push_str(&String::from_utf8_lossy(&buf[..read]));
+            if read < buf.len() {
+                break;
+            }
+        }
+
+        waitpid(pid, None).expect("failed to wait for env");
+        nix::unistd::close(infd).expect("failed to close pipe output in parent");
+
+        if !all.contains("HELLO_ENV=hi env") {
+            panic!(
+                "could not find environment variable in env output.\nenv:\n{}",
+                all
+            );
+        }
+    }
 }
