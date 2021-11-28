@@ -81,7 +81,7 @@ impl JobManager {
         self.await_all(&jids);
         Ok(jids
             .last()
-            .map(|id| self.completed_jobs.get(id).unwrap().clone())
+            .map(|id| *self.completed_jobs.get(id).unwrap())
             .unwrap_or(ExitStatus {
                 exit_code: 0,
                 core_dumped: false,
@@ -97,7 +97,7 @@ impl JobManager {
                 WaitStatus::Exited(pid, code) => {
                     status = self.running_jobs.get(&pid.into()).map(|jid| {
                         (
-                            jid.clone(),
+                            *jid,
                             ExitStatus {
                                 pid: pid,
                                 exit_code: code,
@@ -110,7 +110,7 @@ impl JobManager {
                 WaitStatus::Signaled(pid, sig, core_dump) => {
                     status = self.running_jobs.get(&pid.into()).map(|jid| {
                         (
-                            jid.clone(),
+                            *jid,
                             ExitStatus {
                                 pid: pid,
                                 exit_code: -1,
@@ -291,7 +291,7 @@ impl JobManager {
 
     pub fn stat(&mut self, jid: Jid) -> Result<JobStatus> {
         if let Some(status) = self.completed_jobs.get(&jid) {
-            Ok(JobStatus::Complete(status.clone()))
+            Ok(JobStatus::Complete(*status))
         } else {
             self.running_jobs
                 .iter()
@@ -305,7 +305,7 @@ impl JobManager {
     /// Wait for a specific job to complete
     pub fn r#await(&mut self, jid: Jid) -> Result<ExitStatus> {
         if let Some(exit_status) = self.completed_jobs.get(&jid) {
-            return Ok(exit_status.clone());
+            return Ok(*exit_status);
         }
 
         let mut completed = self.next()?;
