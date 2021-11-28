@@ -302,7 +302,7 @@ impl JobManager {
     pub fn await_all(&mut self, jids: &[Jid]) -> Result<()> {
         let mut incomplete: BTreeSet<Jid> = jids
             .iter()
-            .map(|jid| *jid)
+            .copied()
             .filter(|jid| self.completed_jobs.get(jid).is_none())
             .collect();
 
