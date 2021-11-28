@@ -52,13 +52,19 @@ struct ProcOptions<'a> {
     stdout: Option<RawFd>,
 }
 
-impl JobManager {
-    pub fn new() -> JobManager {
+impl Default for JobManager {
+    fn default() -> Self {
         JobManager {
             next_jid: 0,
             running_jobs: BTreeMap::new(),
             completed_jobs: BTreeMap::new(),
         }
+    }
+}
+
+impl JobManager {
+    pub fn new() -> JobManager {
+        Self::default()
     }
 
     pub fn run(&mut self, ec: &mut ExecutionContext, command: Command) -> Result<ExitStatus> {
