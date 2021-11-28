@@ -223,8 +223,8 @@ impl JobManager {
                 let mut jids = self.spawn_procs_from_ast(&from_opts, ec, &pipe.from)?;
                 jids.extend(self.spawn_procs_from_ast(&to_opts, ec, &pipe.to)?);
 
-                unistd::close(stdin);
-                unistd::close(stdout);
+                unistd::close(stdin).context(ErrorKind::ExecFailed)?;
+                unistd::close(stdout).context(ErrorKind::ExecFailed)?;
 
                 Ok(jids)
             }
