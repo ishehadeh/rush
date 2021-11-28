@@ -336,13 +336,19 @@ impl JobManager {
     }
 }
 
-impl ExecutionContext {
-    pub fn new() -> ExecutionContext {
+impl Default for ExecutionContext {
+    fn default() -> Self {
         ExecutionContext {
             vars: Variables::from_env(),
             funcs: Functions::new(),
             cwd: env::current_dir().unwrap(),
         }
+    }
+}
+
+impl ExecutionContext {
+    pub fn new() -> ExecutionContext {
+        Self::default()
     }
 
     pub fn variables<'a>(&'a self) -> &'a Variables {
