@@ -363,12 +363,10 @@ fn exec_subprocess(exe: &str, args: &[String]) -> Result<(), SubprocessSetupErro
         })?);
     }
 
-    nix::unistd::execve(&c_exe, &c_args, &[]).map_err(|source| {
-        SubprocessSetupError::ExecFailed {
-            source,
-            executable: exe.to_string(),
-            args: args.to_owned(),
-        }
+    nix::unistd::execv(&c_exe, &c_args).map_err(|source| SubprocessSetupError::ExecFailed {
+        source,
+        executable: exe.to_string(),
+        args: args.to_owned(),
     })?;
 
     unreachable!();
@@ -468,6 +466,7 @@ mod test {
         }
 
         let pid = ProcessOptions::new("/usr/bin/printf")
+            .arg("printf")
             .arg("%s")
             .arg("hello world")
             .redirect(1, 2)
@@ -498,6 +497,7 @@ mod test {
 
         let (infd, outfd) = nix::unistd::pipe().expect("failed to create pipe");
         let revpid = ProcessOptions::new("/usr/bin/rev")
+            .arg("rev")
             .redirect(infd, 0)
             .write(1, &out_file)
             .close(outfd)
@@ -505,6 +505,7 @@ mod test {
             .spawn()
             .expect("failed to spawn rev");
         let printfpid = ProcessOptions::new("/usr/bin/printf")
+            .arg("printf")
             .arg("%s")
             .arg("hello")
             .redirect(outfd, 1)
