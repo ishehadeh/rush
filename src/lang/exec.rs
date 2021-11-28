@@ -229,18 +229,16 @@ impl JobManager {
                 Ok(jids)
             }
             Command::BraceGroup(group) => {
-                let mut exit_code = 0;
                 let mut subenv = ec.clone();
                 for cmd in &group.commands {
-                    let jids = self.spawn_procs_from_ast(opts, &mut subenv, &cmd)?;
+                    let jids = self.spawn_procs_from_ast(opts, &mut subenv, cmd)?;
                     self.await_all(&jids)?;
                 }
                 Ok(Vec::new())
             }
             Command::Group(group) => {
-                let mut exit_code = 0;
                 for cmd in &group.commands {
-                    let jids = self.spawn_procs_from_ast(opts, ec, &cmd)?;
+                    let jids = self.spawn_procs_from_ast(opts, ec, cmd)?;
                     self.await_all(&jids)?;
                 }
                 Ok(Vec::new())
