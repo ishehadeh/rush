@@ -281,7 +281,7 @@ impl JobManager {
             self.running_jobs
                 .iter()
                 .find(|(_, v)| **v == jid)
-                .map_or(Err(ErrorKind::InvalidJobId(jid).into()), |v| {
+                .map_or(Err(ErrorKind::InvalidJobId(jid).into()), |_v| {
                     Ok(JobStatus::Running)
                 })
         }
