@@ -573,7 +573,7 @@ mod test {
                     Word::parse("helloworld"),
                 ]),
             )
-            .expect("failed to execute printf failed");
+            .expect("failed to execute printf");
         assert_eq!(status.exit_code, 0);
 
         ec.variables_mut()
@@ -588,7 +588,7 @@ mod test {
                     Word::parse("shadowed"),
                 ]),
             )
-            .expect("failed to execute printf failed");
+            .expect("failed to execute printf");
         assert_eq!(status.exit_code, 0);
     }
 
