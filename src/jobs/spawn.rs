@@ -376,12 +376,14 @@ fn exec_subprocess(exe: &str, args: &[String]) -> Result<(), SubprocessSetupErro
 
 #[cfg(test)]
 mod test {
+    use crate::{
+        jobs::spawn::{OpenMode, ProcessOptions, SubprocessSetupError},
+        test_util::forks,
+    };
     use nix::{
         sys::wait::{waitpid, WaitStatus},
         unistd::Pid,
     };
-
-    use super::{OpenMode, ProcessOptions, SubprocessSetupError};
     use std::{
         collections::HashSet,
         fs::File,
@@ -456,6 +458,8 @@ mod test {
 
     #[test]
     fn spawn_printf() {
+        forks!();
+
         let out_file = PathBuf::from("test/data/spawn_printf-out.txt");
         match std::fs::remove_file(&out_file) {
             Ok(_) => (),
@@ -483,6 +487,8 @@ mod test {
 
     #[test]
     fn spawn_pipe() {
+        forks!();
+
         let out_file = PathBuf::from("test/data/spawn_pipe-out.txt");
         match std::fs::remove_file(&out_file) {
             Ok(_) => (),

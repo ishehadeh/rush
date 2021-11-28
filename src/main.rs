@@ -7,6 +7,9 @@ extern crate failure;
 extern crate nix;
 extern crate nixterm;
 
+#[cfg(test)]
+mod test_util;
+
 pub mod env;
 pub mod expr;
 pub mod jobs;
