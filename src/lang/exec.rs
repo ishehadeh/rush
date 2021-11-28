@@ -378,7 +378,7 @@ mod test {
 
     use crate::{
         lang::{
-            ast::{Command, ConditionOperator},
+            ast::{Command, CommandGroup, ConditionOperator, Function},
             word::Word,
         },
         test_util::forks,
@@ -590,5 +590,62 @@ mod test {
             )
             .expect("failed to execute printf failed");
         assert_eq!(status.exit_code, 0);
+    }
+
+    #[test]
+    fn function_call_pipeline() {
+        forks!();
+
+        let mut ec = ExecutionContext::new();
+        let mut jm = JobManager::new();
+
+        let out_file = "test/data/function_call_pipeline-out.txt";
+        match std::fs::remove_file(&out_file) {
+            Ok(_) => (),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(err) => panic!("failed to remove file: {}", err),
+        }
+
+        let status = jm
+            .run(
+                &mut ec,
+                Command::Function(Box::new(Function {
+                    name: Word::parse("write_hello_3"),
+                    body: Command::BraceGroup(Box::new(CommandGroup {
+                        commands: vec![
+                            Command::simple(vec![Word::parse("printf"), Word::parse("hello\\n")]),
+                            Command::simple(vec![Word::parse("printf"), Word::parse("hello\\n")]),
+                            Command::simple(vec![Word::parse("printf"), Word::parse("hello\\n")]),
+                        ],
+                    })),
+                })),
+            )
+            .expect("failed to execute function statement");
+        assert_eq!(status.exit_code, 0);
+
+        ec.variables_mut()
+            .define("EXPAND_ENV_VARS_TEST", "shadowed");
+        let status = jm
+            .run(
+                &mut ec,
+                Command::pipeline(
+                    false,
+                    Command::simple(vec![Word::parse("write_hello_3")]),
+                    Command::simple(vec![
+                        Word::parse("cp"),
+                        Word::parse("/dev/stdin"),
+                        Word::parse(out_file),
+                    ]),
+                ),
+            )
+            .expect("failed to run function");
+        assert_eq!(status.exit_code, 0);
+
+        let mut content = String::new();
+        File::open(out_file)
+            .expect("failed to open out file")
+            .read_to_string(&mut content)
+            .expect("failed to read out file");
+        assert_eq!(content, "hello\nhello\nhello\n");
     }
 }
