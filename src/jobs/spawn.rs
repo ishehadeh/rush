@@ -169,6 +169,7 @@ pub enum OpenMode {
 }
 
 /// Description of a process to be spawned
+#[derive(Clone, Debug)]
 pub struct ProcessOptions {
     /// Process working directory, `None` means inherit from parent process
     wd: Option<PathBuf>,
@@ -195,40 +196,39 @@ impl ProcessOptions {
         ProcessOptions::default()
     }
 
-    pub fn env(&mut self, k: &str, v: &str) -> &mut ProcessOptions {
+    fn add_fd_op(mut self, fd: i32, op: FdOp) -> Self {
+        self.fd.push((fd, op));
+        self
+    }
+
+    pub fn env(mut self, k: &str, v: &str) -> Self {
         self.env.push((k.into(), v.into()));
         self
     }
 
-    pub fn work_dir<P: Into<PathBuf>>(&mut self, dir: P) -> &mut ProcessOptions {
+    pub fn work_dir<P: Into<PathBuf>>(mut self, dir: P) -> Self {
         self.wd = Some(dir.into());
         self
     }
 
-    pub fn read<I: Into<PathBuf>>(&mut self, fd: i32, file: I) -> &mut ProcessOptions {
-        self.fd.push((fd, FdOp::Open(file.into(), OpenMode::Read)));
-        self
+    pub fn read<I: Into<PathBuf>>(self, fd: i32, file: I) -> Self {
+        self.add_fd_op(fd, FdOp::Open(file.into(), OpenMode::Read))
     }
 
-    pub fn write<I: Into<PathBuf>>(&mut self, fd: i32, file: I) -> &mut ProcessOptions {
-        self.fd.push((fd, FdOp::Open(file.into(), OpenMode::Write)));
-        self
+    pub fn write<I: Into<PathBuf>>(self, fd: i32, file: I) -> Self {
+        self.add_fd_op(fd, FdOp::Open(file.into(), OpenMode::Write))
     }
 
-    pub fn append<I: Into<PathBuf>>(&mut self, fd: i32, file: I) -> &mut ProcessOptions {
-        self.fd
-            .push((fd, FdOp::Open(file.into(), OpenMode::Append)));
-        self
+    pub fn append<I: Into<PathBuf>>(self, fd: i32, file: I) -> Self {
+        self.add_fd_op(fd, FdOp::Open(file.into(), OpenMode::Append))
     }
 
-    pub fn close(&mut self, fd: i32) -> &mut ProcessOptions {
-        self.fd.push((fd, FdOp::Close));
-        self
+    pub fn close(self, fd: i32) -> Self {
+        self.add_fd_op(fd, FdOp::Close)
     }
 
-    pub fn redirect(&mut self, source_fd: i32, target_fd: i32) -> &mut ProcessOptions {
-        self.fd.push((source_fd, FdOp::Redirect(target_fd)));
-        self
+    pub fn redirect(self, source_fd: i32, target_fd: i32) -> Self {
+        self.add_fd_op(source_fd, FdOp::Redirect(target_fd))
     }
 
     pub fn spawn<S: AsRef<str>>(&self, executable: &str, args: &[S]) -> Result<Pid, SpawnError> {

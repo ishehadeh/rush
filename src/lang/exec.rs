@@ -176,22 +176,22 @@ impl JobManager {
 
                     let mut proc = ProcessOptions::new();
                     for (k, v) in opts.env {
-                        proc.env(k, v);
+                        proc = proc.env(k, v);
                     }
 
-                    proc.work_dir(&ec.cwd);
+                    proc = proc.work_dir(&ec.cwd);
 
                     if let Some(stdin) = opts.stdin {
-                        proc.redirect(stdin, 0);
-                        proc.close(stdin);
+                        proc = proc.redirect(stdin, 0);
+                        proc = proc.close(stdin);
                     }
 
                     if let Some(stdout) = opts.stdout {
-                        proc.redirect(stdout, 1);
-                        proc.close(stdout);
+                        proc = proc.redirect(stdout, 1);
+                        proc = proc.close(stdout);
                     }
                     for &close in opts.close_fds {
-                        proc.close(close);
+                        proc = proc.close(close);
                     }
                     let pid = proc
                         .spawn(&executable, &args)
