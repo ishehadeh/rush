@@ -17,7 +17,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env,
     ffi::{OsStr, OsString},
-    os::unix::io::RawFd,
     path::PathBuf,
 };
 
@@ -50,13 +49,6 @@ pub struct JobManager {
     completed_jobs: BTreeMap<Jid, ExitStatus>,
 }
 
-struct ProcOptions<'a> {
-    close_fds: &'a Vec<RawFd>,
-    env: &'a [(String, String)],
-    stdin: Option<RawFd>,
-    stdout: Option<RawFd>,
-}
-
 impl Default for JobManager {
     fn default() -> Self {
         JobManager {
@@ -73,16 +65,7 @@ impl JobManager {
     }
 
     pub fn run(&mut self, ec: &mut ExecutionContext, command: Command) -> Result<ExitStatus> {
-        let close_fds = Vec::new();
-        let env = Vec::new();
-        let opts = ProcOptions {
-            stdin: None,
-            stdout: None,
-            close_fds: &close_fds,
-            env: &env,
-        };
-
-        let jids = self.spawn_procs_from_ast(&opts, ec, &command)?;
+        let jids = self.spawn_procs_from_ast(&ProcessOptions::default(), ec, &command)?;
         self.await_all(&jids)?;
         Ok(jids
             .last()
@@ -140,9 +123,9 @@ impl JobManager {
     }
 
     // spawn 0 or more processes based on a shell-language abstract syntax tree in a given execution context
-    fn spawn_procs_from_ast<'a>(
+    fn spawn_procs_from_ast(
         &mut self,
-        opts: &'a ProcOptions<'a>,
+        opts: &ProcessOptions,
         ec: &mut ExecutionContext,
         command: &Command,
     ) -> Result<Vec<Jid>> {
@@ -174,26 +157,7 @@ impl JobManager {
                         );
                     }
 
-                    let mut proc = ProcessOptions::new();
-                    for (k, v) in opts.env {
-                        proc = proc.env(k, v);
-                    }
-
-                    proc = proc.work_dir(&ec.cwd);
-
-                    if let Some(stdin) = opts.stdin {
-                        proc = proc.redirect(stdin, 0);
-                        proc = proc.close(stdin);
-                    }
-
-                    if let Some(stdout) = opts.stdout {
-                        proc = proc.redirect(stdout, 1);
-                        proc = proc.close(stdout);
-                    }
-                    for &close in opts.close_fds {
-                        proc = proc.close(close);
-                    }
-                    let pid = proc
+                    let pid = opts
                         .spawn(&executable, &args)
                         .context(ErrorKind::ExecFailed)?;
 
@@ -202,34 +166,11 @@ impl JobManager {
             }
             Command::Pipeline(pipe) => {
                 let (stdin, stdout) = unistd::pipe().context(ErrorKind::PipelineCreationFailed)?;
-                let mut close_from = opts.close_fds.clone();
-                let mut to_from = opts.close_fds.clone();
+                let left_opts = opts.clone().redirect(stdout, 1).close(stdout).close(stdin);
+                let right_opts = opts.clone().redirect(stdin, 0).close(stdout).close(stdin);
 
-                close_from.push(stdin);
-                if let Some(pipe_out) = opts.stdout {
-                    close_from.push(pipe_out)
-                }
-                to_from.push(stdout);
-                if let Some(pipe_in) = opts.stdin {
-                    to_from.push(pipe_in)
-                }
-
-                let from_opts = ProcOptions {
-                    close_fds: &close_from,
-                    env: opts.env,
-                    stdin: opts.stdin,
-                    stdout: Some(stdout),
-                };
-
-                let to_opts = ProcOptions {
-                    close_fds: &to_from,
-                    env: opts.env,
-                    stdin: Some(stdin),
-                    stdout: opts.stdout,
-                };
-
-                let mut jids = self.spawn_procs_from_ast(&from_opts, ec, &pipe.from)?;
-                jids.extend(self.spawn_procs_from_ast(&to_opts, ec, &pipe.to)?);
+                let mut jids = self.spawn_procs_from_ast(&left_opts, ec, &pipe.from)?;
+                jids.extend(self.spawn_procs_from_ast(&right_opts, ec, &pipe.to)?);
 
                 unistd::close(stdin).context(ErrorKind::ExecFailed)?;
                 unistd::close(stdout).context(ErrorKind::ExecFailed)?;
