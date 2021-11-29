@@ -156,23 +156,25 @@ impl JobManager {
                 if let Some(body) = ec.functions().value(&argv0) {
                     self.spawn_procs_from_ast(opts, ec, &body)
                 } else {
-                    let mut proc = if argv0.starts_with("./") {
-                        ProcessOptions::new(&argv0)
+                    let executable = if argv0.starts_with("./") {
+                        argv0.clone()
                     } else {
-                        let executable = ec.find_executable(&argv0)?.to_string_lossy().to_string();
-                        ProcessOptions::new(&executable)
+                        ec.find_executable(&argv0)?.to_string_lossy().to_string()
                     };
+
+                    let mut args = Vec::with_capacity(cmd.arguments.len());
 
                     // The first argument is the command used to run the executable
                     // Avoid compiling it again since that can have side effects (e.g. "./exe$(exe += 1))")
-                    proc.arg(&argv0);
+                    args.push(argv0);
                     for arg in cmd.arguments.iter().skip(1) {
-                        proc.arg(
-                            &arg.compile(ec.variables_mut())
+                        args.push(
+                            arg.compile(ec.variables_mut())
                                 .context(ErrorKind::ExecFailed)?,
                         );
                     }
 
+                    let mut proc = ProcessOptions::new();
                     for (k, v) in opts.env {
                         proc.env(k, v);
                     }
@@ -191,7 +193,9 @@ impl JobManager {
                     for &close in opts.close_fds {
                         proc.close(close);
                     }
-                    let pid = proc.spawn().context(ErrorKind::ExecFailed)?;
+                    let pid = proc
+                        .spawn(&executable, &args)
+                        .context(ErrorKind::ExecFailed)?;
 
                     Ok(vec![self.add_job(pid)])
                 }

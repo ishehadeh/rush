@@ -170,14 +170,8 @@ pub enum OpenMode {
 
 /// Description of a process to be spawned
 pub struct ProcessOptions {
-    /// Arguments passed to the executable
-    args: Vec<String>,
-
     /// Process working directory, `None` means inherit from parent process
     wd: Option<PathBuf>,
-
-    /// absolute path to the exeutable file
-    executable: String,
 
     /// *Additional* environment variables to be set for this process, it will inherit all variables from the current process
     env: Vec<(String, String)>,
@@ -186,19 +180,19 @@ pub struct ProcessOptions {
     fd: Vec<(i32, FdOp)>,
 }
 
-impl ProcessOptions {
-    pub fn new(exe: &str) -> ProcessOptions {
+impl Default for ProcessOptions {
+    fn default() -> ProcessOptions {
         ProcessOptions {
-            executable: exe.to_string(),
-            args: vec![],
             env: vec![],
             fd: vec![],
             wd: None,
         }
     }
-    pub fn arg(&mut self, arg: &str) -> &mut ProcessOptions {
-        self.args.push(arg.into());
-        self
+}
+
+impl ProcessOptions {
+    pub fn new() -> ProcessOptions {
+        ProcessOptions::default()
     }
 
     pub fn env(&mut self, k: &str, v: &str) -> &mut ProcessOptions {
@@ -237,16 +231,16 @@ impl ProcessOptions {
         self
     }
 
-    pub fn spawn(&self) -> Result<Pid, SpawnError> {
+    pub fn spawn<S: AsRef<str>>(&self, executable: &str, args: &[S]) -> Result<Pid, SpawnError> {
         match nix::unistd::fork() {
             Err(source) => Err(SpawnError::ForkFailed { source }),
             Ok(ForkResult::Child) => {
                 if let Err(e) = setup_subprocess(self) {
-                    eprintln!("could not spawn {:?}: {}", self.executable, e);
+                    eprintln!("could not spawn {:?}: {}", executable, e);
                     exit(1);
                 }
 
-                if let Err(e) = exec_subprocess(&self.executable, &self.args) {
+                if let Err(e) = exec_subprocess(executable, args) {
                     // don't mention the executable here because its in the error message
                     eprintln!("{}", e);
                     exit(1);
@@ -346,7 +340,7 @@ fn setup_subprocess(opts: &ProcessOptions) -> Result<(), SubprocessSetupError> {
     Ok(())
 }
 
-fn exec_subprocess(exe: &str, args: &[String]) -> Result<(), SubprocessSetupError> {
+fn exec_subprocess<S: AsRef<str>>(exe: &str, args: &[S]) -> Result<(), SubprocessSetupError> {
     let c_exe =
         CString::new(exe.as_bytes()).map_err(|_| SubprocessSetupError::ArgContainsNull {
             arg_number: 0,
@@ -355,10 +349,11 @@ fn exec_subprocess(exe: &str, args: &[String]) -> Result<(), SubprocessSetupErro
 
     let mut c_args = Vec::with_capacity(args.len());
     for (i, arg) in args.iter().enumerate() {
-        c_args.push(CString::new(arg.as_bytes()).map_err(|_| {
+        let arg_s = arg.as_ref();
+        c_args.push(CString::new(arg_s.as_bytes()).map_err(|_| {
             SubprocessSetupError::ArgContainsNull {
                 arg_number: i + 1,
-                arg: arg.clone(),
+                arg: arg_s.to_owned(),
             }
         })?);
     }
@@ -366,7 +361,7 @@ fn exec_subprocess(exe: &str, args: &[String]) -> Result<(), SubprocessSetupErro
     nix::unistd::execv(&c_exe, &c_args).map_err(|source| SubprocessSetupError::ExecFailed {
         source,
         executable: exe.to_string(),
-        args: args.to_owned(),
+        args: args.iter().map(|arg| arg.as_ref().to_owned()).collect(),
     })?;
 
     unreachable!();
@@ -465,14 +460,11 @@ mod test {
             Err(err) => panic!("failed to remove file: {}", err),
         }
 
-        let pid = ProcessOptions::new("/usr/bin/printf")
-            .arg("printf")
-            .arg("%s")
-            .arg("hello world")
+        let pid = ProcessOptions::new()
             .redirect(1, 2)
             .close(2)
             .write(1, &out_file)
-            .spawn()
+            .spawn("/usr/bin/printf", &["printf", "%s", "hello world"])
             .expect("spawn failed");
         waitpid(pid, None).expect("wait for printf failed");
 
@@ -496,22 +488,18 @@ mod test {
         }
 
         let (infd, outfd) = nix::unistd::pipe().expect("failed to create pipe");
-        let revpid = ProcessOptions::new("/usr/bin/rev")
-            .arg("rev")
+        let revpid = ProcessOptions::new()
             .redirect(infd, 0)
             .write(1, &out_file)
             .close(outfd)
             .close(infd)
-            .spawn()
+            .spawn("/usr/bin/rev", &["rev"])
             .expect("failed to spawn rev");
-        let printfpid = ProcessOptions::new("/usr/bin/printf")
-            .arg("printf")
-            .arg("%s")
-            .arg("hello")
+        let printfpid = ProcessOptions::new()
             .redirect(outfd, 1)
             .close(outfd)
             .close(infd)
-            .spawn()
+            .spawn("/usr/bin/printf", &["printf", "%s", "hello"])
             .expect("failed to spawn printf");
 
         nix::unistd::close(infd).expect("failed to close pipe input in parent");
@@ -548,13 +536,12 @@ mod test {
 
         let (infd, outfd) = nix::unistd::pipe().expect("failed to create pipe");
 
-        let pid = ProcessOptions::new("/usr/bin/env")
-            .arg("env")
+        let pid = ProcessOptions::new()
             .env("HELLO_ENV", "hi env")
             .redirect(outfd, 1)
             .close(outfd)
             .close(infd)
-            .spawn()
+            .spawn("/usr/bin/env", &["env"])
             .expect("failed to spawn env");
 
         nix::unistd::close(outfd).expect("failed to close pipe output in parent");
